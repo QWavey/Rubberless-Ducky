@@ -22,8 +22,8 @@ extern const uint8_t usb_hid_report_descriptor[];
 extern const uint16_t usb_hid_report_descriptor_size;
 
 extern const uint8_t usb_str_lang_descriptor[4];
-extern const uint8_t usb_str_manufacturer_descriptor[10];
-extern const uint8_t usb_str_product_descriptor[38];
+extern uint8_t usb_str_manufacturer_descriptor[66]; // max 32 chars + header
+extern uint8_t usb_str_product_descriptor[66];
 extern uint8_t usb_str_serial_descriptor[14];
 
 #endif /* USB_DESCRIPTORS_H_ */

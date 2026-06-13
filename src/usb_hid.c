@@ -159,11 +159,6 @@ static void fire_callback(usb_event_t event);
 
 void usb_device_init(void)
 {
-    static uint8_t serial_counter = 0;
-    serial_counter++;
-    usb_str_serial_descriptor[2] = '0' + (serial_counter % 10);
-    usb_str_serial_descriptor[4] = '0' + ((serial_counter / 10) % 10);
-
     s_out_callback  = NULL;
     s_state         = DEVICE_STATE_UNATTACHED;
     s_address       = 0;
@@ -195,8 +190,17 @@ void usb_device_init(void)
     usbb_init();
 }
 
+uint8_t usb_custom_serial_set = 0;
+
 void usb_device_enable(void)
 {
+    static uint8_t serial_counter = 0;
+    if (!usb_custom_serial_set) {
+        serial_counter++;
+        usb_str_serial_descriptor[2] = '0' + (serial_counter % 10);
+        usb_str_serial_descriptor[4] = '0' + ((serial_counter / 10) % 10);
+    }
+
     usbb_attach();
 }
 
@@ -709,16 +713,16 @@ static const uint8_t *get_string_descriptor(uint8_t index, uint16_t *out_len)
 {
     switch (index) {
         case 0:
-            *out_len = sizeof(usb_str_lang_descriptor);
+            *out_len = usb_str_lang_descriptor[0];
             return usb_str_lang_descriptor;
         case 1:
-            *out_len = sizeof(usb_str_manufacturer_descriptor);
+            *out_len = usb_str_manufacturer_descriptor[0];
             return usb_str_manufacturer_descriptor;
         case 2:
-            *out_len = sizeof(usb_str_product_descriptor);
+            *out_len = usb_str_product_descriptor[0];
             return usb_str_product_descriptor;
         case 3:
-            *out_len = sizeof(usb_str_serial_descriptor);
+            *out_len = usb_str_serial_descriptor[0];
             return usb_str_serial_descriptor;
         default:
             *out_len = 0;

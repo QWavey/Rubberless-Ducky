@@ -352,6 +352,19 @@ static uint8_t get_random(uint8_t min, uint8_t max) {
 
 FATFS fs;
 
+
+static void start_usb_and_wait(void) {
+    usb_device_init();
+    usb_device_register_callback(USB_EVENT_ENUMERATED, usb_device_enumerated_cb);
+    usb_device_register_callback(USB_EVENT_CONFIG_REQUESTED, usb_device_config_requested_cb);
+    usb_hid_register_out_callback(usb_hid_report_out_cb);
+    usb_device_enable();
+    for (int i = 0; i < 200; i++) {
+        uint32_t start = get_cpu_count();
+        while ((get_cpu_count() - start) < 48000) {}
+    }
+}
+
 int main(void)
 {
     Disable_global_interrupt();
@@ -387,11 +400,7 @@ int main(void)
     gpio_high      (LED_PORT_RED, LED_PIN_RED);
     gpio_in_pullup (BTN_PORT, BTN_PIN);
 
-    usb_device_init();
-    usb_device_register_callback(USB_EVENT_ENUMERATED, usb_device_enumerated_cb);
-    usb_device_register_callback(USB_EVENT_CONFIG_REQUESTED, usb_device_config_requested_cb);
-    usb_hid_register_out_callback(usb_hid_report_out_cb);
-    usb_device_enable();
+
 
     FRESULT res_mount = pf_mount(&fs);
     if (res_mount == FR_OK) {
@@ -426,6 +435,7 @@ int main(void)
                     if (pc < word_count) pc++; // Skip closing 0xe8e8
                 }
                 
+                start_usb_and_wait();
                 // Execution loop
                 while (pc < word_count) {
                     usb_device_task();
@@ -710,12 +720,14 @@ int main(void)
             }
         } else {
             gpio_low(LED_PORT_RED, LED_PIN_RED); // Red ON
+            start_usb_and_wait();
             type_string("failed to open INJECT.BIN. error: ");
             type_number(res_bin);
             type_char('\n');
         }
     } else {
         gpio_low(LED_PORT_RED, LED_PIN_RED); // Red ON
+        start_usb_and_wait();
         type_string("failed to mount sd card. error: ");
         type_number(res_mount);
         type_char('\n');
