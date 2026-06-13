@@ -2,7 +2,7 @@
 #include <stddef.h>
 
 /* USB Standard Device Descriptor */
-const uint8_t usb_device_descriptor[] = {
+uint8_t usb_device_descriptor[] = {
     18,         /* bLength */
     0x01,       /* bDescriptorType: Device */
     0x00, 0x02, /* bcdUSB: 2.00 */

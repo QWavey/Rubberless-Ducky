@@ -598,6 +598,18 @@ int main(void)
                             usb_config_descriptor = usb_config_descriptor_hid;
                             usb_config_descriptor_size = usb_config_descriptor_hid_size;
                         }
+                        
+                        // Dynamically update VID/PID if changed, and change PID for composite devices to bypass OS caching
+                        extern uint8_t usb_device_descriptor[];
+                        uint16_t pid = current_pid;
+                        if (current_attackmode == 3) pid ^= 0x4242; // Change PID for HID+STORAGE to force re-enumeration
+                        else if (current_attackmode == 2) pid ^= 0x1337; // Change PID for STORAGE ONLY
+                        
+                        usb_device_descriptor[8] = current_vid & 0xFF;
+                        usb_device_descriptor[9] = current_vid >> 8;
+                        usb_device_descriptor[10] = pid & 0xFF;
+                        usb_device_descriptor[11] = pid >> 8;
+                        
                         if (current_attackmode != 0) {
                             usb_device_enable();
                         }

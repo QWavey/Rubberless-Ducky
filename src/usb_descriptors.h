@@ -6,7 +6,7 @@
 #define USB_VID  0x05AC // Default VID
 #define USB_PID  0x021E // Default PID
 
-extern const uint8_t usb_device_descriptor[];
+extern uint8_t usb_device_descriptor[];
 extern const uint16_t usb_device_descriptor_size;
 
 extern const uint8_t* usb_config_descriptor;

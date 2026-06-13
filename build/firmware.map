@@ -79,7 +79,7 @@ LOAD build/startup.o
 .rela.got       0x8000200c        0x0
  .rela.got      0x8000200c        0x0 build/usb_descriptors.o
 
-.text           0x8000200c     0x3928
+.text           0x8000200c     0x3970
                 0x8000200c                . = ALIGN (0x4)
  *(.text)
  .text          0x8000200c       0x44 build/startup.o
@@ -115,139 +115,138 @@ LOAD build/startup.o
                 0x80002794       0xa0 build/main.o
  .text.start_usb_and_wait
                 0x80002834       0x5c build/main.o
- .text.main     0x80002890      0xed0 build/main.o
+ .text.main     0x80002890      0xf28 build/main.o
                 0x80002890                main
  .text.usb_device_init
-                0x80003760       0x94 build/usb_hid.o
-                0x80003760                usb_device_init
+                0x800037b8       0x94 build/usb_hid.o
+                0x800037b8                usb_device_init
  .text.usb_device_enable
-                0x800037f4       0x6c build/usb_hid.o
-                0x800037f4                usb_device_enable
+                0x8000384c       0x6c build/usb_hid.o
+                0x8000384c                usb_device_enable
  .text.usb_device_disable
-                0x80003860        0xc build/usb_hid.o
-                0x80003860                usb_device_disable
+                0x800038b8        0xc build/usb_hid.o
+                0x800038b8                usb_device_disable
  .text.usb_device_register_callback
-                0x8000386c       0x10 build/usb_hid.o
-                0x8000386c                usb_device_register_callback
+                0x800038c4       0x10 build/usb_hid.o
+                0x800038c4                usb_device_register_callback
  .text.usb_hid_register_out_callback
-                0x8000387c        0xc build/usb_hid.o
-                0x8000387c                usb_hid_register_out_callback
+                0x800038d4        0xc build/usb_hid.o
+                0x800038d4                usb_hid_register_out_callback
  .text.usb_hid_in_endpoint_ready
-                0x80003888        0xe build/usb_hid.o
-                0x80003888                usb_hid_in_endpoint_ready
+                0x800038e0        0xe build/usb_hid.o
+                0x800038e0                usb_hid_in_endpoint_ready
  .text.usb_hid_send_report
-                0x80003896       0x3a build/usb_hid.o
-                0x80003896                usb_hid_send_report
+                0x800038ee       0x3a build/usb_hid.o
+                0x800038ee                usb_hid_send_report
  .text.ep0_send
-                0x800038d0      0x102 build/usb_hid.o
-                0x800038d0                ep0_send
+                0x80003928      0x102 build/usb_hid.o
+                0x80003928                ep0_send
  .text.ep0_ack_status_in
-                0x800039d2       0x34 build/usb_hid.o
-                0x800039d2                ep0_ack_status_in
- *fill*         0x80003a06        0x2 00
+                0x80003a2a       0x34 build/usb_hid.o
+                0x80003a2a                ep0_ack_status_in
+ *fill*         0x80003a5e        0x2 00
  .text.fire_callback
-                0x80003a08       0x1c build/usb_hid.o
+                0x80003a60       0x1c build/usb_hid.o
  .text.usb_device_task
-                0x80003a24      0x6e0 build/usb_hid.o
-                0x80003a24                usb_device_task
+                0x80003a7c      0x6e0 build/usb_hid.o
+                0x80003a7c                usb_device_task
  .text.sd_spi_transfer
-                0x80004104      0x61c build/mmc.o
- .text.rcv_spi  0x80004720       0x10 build/mmc.o
+                0x8000415c      0x61c build/mmc.o
+ .text.rcv_spi  0x80004778       0x10 build/mmc.o
  .text.send_cmd
-                0x80004730       0xbc build/mmc.o
+                0x80004788       0xbc build/mmc.o
  .text.disk_initialize
-                0x800047ec      0x1f8 build/mmc.o
-                0x800047ec                disk_initialize
+                0x80004844      0x1f8 build/mmc.o
+                0x80004844                disk_initialize
  .text.disk_readp
-                0x800049e4       0xac build/mmc.o
-                0x800049e4                disk_readp
+                0x80004a3c       0xac build/mmc.o
+                0x80004a3c                disk_readp
  .text.sd_read_sector
-                0x80004a90       0x90 build/mmc.o
-                0x80004a90                sd_read_sector
+                0x80004ae8       0x90 build/mmc.o
+                0x80004ae8                sd_read_sector
  .text.sd_write_sector
-                0x80004b20       0xa0 build/mmc.o
-                0x80004b20                sd_write_sector
+                0x80004b78       0xa0 build/mmc.o
+                0x80004b78                sd_write_sector
  .text.dir_rewind
-                0x80004bc0       0x58 build/pff.o
- .text.get_fat  0x80004c18       0xfc build/pff.o
+                0x80004c18       0x58 build/pff.o
+ .text.get_fat  0x80004c70       0xfc build/pff.o
  .text.dir_next
-                0x80004d14       0x84 build/pff.o
+                0x80004d6c       0x84 build/pff.o
  .text.follow_path
-                0x80004d98      0x198 build/pff.o
- .text.pf_open  0x80004f30       0xac build/pff.o
-                0x80004f30                pf_open
- .text.pf_read  0x80004fdc       0xe0 build/pff.o
-                0x80004fdc                pf_read
+                0x80004df0      0x198 build/pff.o
+ .text.pf_open  0x80004f88       0xac build/pff.o
+                0x80004f88                pf_open
+ .text.pf_read  0x80005034       0xe0 build/pff.o
+                0x80005034                pf_read
  .text.check_fs
-                0x800050bc       0x84 build/pff.o
+                0x80005114       0x84 build/pff.o
  .text.pf_mount
-                0x80005140      0x1a4 build/pff.o
-                0x80005140                pf_mount
+                0x80005198      0x1a4 build/pff.o
+                0x80005198                pf_mount
  .text.usb_msc_init
-                0x800052e4        0xc build/usb_msc.o
-                0x800052e4                usb_msc_init
+                0x8000533c        0xc build/usb_msc.o
+                0x8000533c                usb_msc_init
  .text.process_scsi_command
-                0x800052f0      0x26c build/usb_msc.o
-                0x800052f0                process_scsi_command
+                0x80005348      0x26c build/usb_msc.o
+                0x80005348                process_scsi_command
  .text.usb_msc_task
-                0x8000555c      0x1e0 build/usb_msc.o
-                0x8000555c                usb_msc_task
+                0x800055b4      0x1e0 build/usb_msc.o
+                0x800055b4                usb_msc_task
  .text.usb_msc_handle_setup
-                0x8000573c       0x74 build/usb_msc.o
-                0x8000573c                usb_msc_handle_setup
+                0x80005794       0x74 build/usb_msc.o
+                0x80005794                usb_msc_handle_setup
  *(.rodata)
  *(.rodata.*)
  .rodata.str1.4
-                0x800057b0       0x74 build/main.o
- .rodata.usb_device_descriptor
-                0x80005824       0x14 build/usb_descriptors.o
-                0x80005824                usb_device_descriptor
- .rodata.usb_config_descriptor_hid
-                0x80005838       0x24 build/usb_descriptors.o
-                0x80005838                usb_config_descriptor_hid
- .rodata.usb_config_descriptor_hid_size
-                0x8000585c        0x2 build/usb_descriptors.o
-                0x8000585c                usb_config_descriptor_hid_size
- .rodata.usb_config_descriptor_msc_size
-                0x8000585e        0x2 build/usb_descriptors.o
-                0x8000585e                usb_config_descriptor_msc_size
- .rodata.usb_hid_report_descriptor_size
-                0x80005860        0x2 build/usb_descriptors.o
-                0x80005860                usb_hid_report_descriptor_size
- .rodata.usb_device_descriptor_size
-                0x80005862        0x2 build/usb_descriptors.o
-                0x80005862                usb_device_descriptor_size
- .rodata.usb_str_lang_descriptor
-                0x80005864        0x4 build/usb_descriptors.o
-                0x80005864                usb_str_lang_descriptor
- .rodata.usb_config_descriptor_comp
-                0x80005868       0x3c build/usb_descriptors.o
-                0x80005868                usb_config_descriptor_comp
+                0x80005808       0x74 build/main.o
  .rodata.usb_hid_report_descriptor
-                0x800058a4       0x40 build/usb_descriptors.o
-                0x800058a4                usb_hid_report_descriptor
+                0x8000587c       0x40 build/usb_descriptors.o
+                0x8000587c                usb_hid_report_descriptor
+ .rodata.usb_config_descriptor_hid
+                0x800058bc       0x24 build/usb_descriptors.o
+                0x800058bc                usb_config_descriptor_hid
+ .rodata.usb_config_descriptor_hid_size
+                0x800058e0        0x2 build/usb_descriptors.o
+                0x800058e0                usb_config_descriptor_hid_size
+ .rodata.usb_hid_report_descriptor_size
+                0x800058e2        0x2 build/usb_descriptors.o
+                0x800058e2                usb_hid_report_descriptor_size
+ .rodata.usb_device_descriptor_size
+                0x800058e4        0x2 build/usb_descriptors.o
+                0x800058e4                usb_device_descriptor_size
+ *fill*         0x800058e6        0x2 00
+ .rodata.usb_str_lang_descriptor
+                0x800058e8        0x4 build/usb_descriptors.o
+                0x800058e8                usb_str_lang_descriptor
+ .rodata.usb_config_descriptor_comp
+                0x800058ec       0x3c build/usb_descriptors.o
+                0x800058ec                usb_config_descriptor_comp
+ .rodata.usb_config_descriptor_msc_size
+                0x80005928        0x2 build/usb_descriptors.o
+                0x80005928                usb_config_descriptor_msc_size
+ *fill*         0x8000592a        0x2 00
  .rodata.usb_config_descriptor_msc
-                0x800058e4       0x20 build/usb_descriptors.o
-                0x800058e4                usb_config_descriptor_msc
+                0x8000592c       0x20 build/usb_descriptors.o
+                0x8000592c                usb_config_descriptor_msc
  .rodata.usb_config_descriptor_comp_size
-                0x80005904        0x2 build/usb_descriptors.o
-                0x80005904                usb_config_descriptor_comp_size
- *fill*         0x80005906        0x2 00
+                0x8000594c        0x2 build/usb_descriptors.o
+                0x8000594c                usb_config_descriptor_comp_size
+ *fill*         0x8000594e        0x2 00
  .rodata.C.1.8368
-                0x80005908        0x8 build/usb_msc.o
+                0x80005950        0x8 build/usb_msc.o
  .rodata.inquiry_data
-                0x80005910       0x24 build/usb_msc.o
-                0x80005934                . = ALIGN (0x4)
-                0x80005934                _etext = .
+                0x80005958       0x24 build/usb_msc.o
+                0x8000597c                . = ALIGN (0x4)
+                0x8000597c                _etext = .
 
 .ARM.extab
  *(.ARM.extab* .gnu.linkonce.armextab.*)
 
 .ARM.exidx
  *(.ARM.exidx* .gnu.linkonce.armexidx.*)
-                0x80005934                _sidata = LOADADDR (.data)
+                0x8000597c                _sidata = LOADADDR (.data)
 
-.data           0x00000000       0xc0 load address 0x80005934
+.data           0x00000000       0xd4 load address 0x8000597c
                 0x00000000                . = ALIGN (0x4)
                 0x00000000                _sdata = .
  *(.data)
@@ -280,135 +279,137 @@ LOAD build/startup.o
                 0x00000018        0x2 build/main.o
  .data.injecting_leds_enabled
                 0x0000001a        0x2 build/main.o
- .data.usb_str_product_descriptor
-                0x0000001c       0x44 build/usb_descriptors.o
-                0x0000001c                usb_str_product_descriptor
  .data.usb_str_manufacturer_descriptor
+                0x0000001c       0x44 build/usb_descriptors.o
+                0x0000001c                usb_str_manufacturer_descriptor
+ .data.usb_str_product_descriptor
                 0x00000060       0x44 build/usb_descriptors.o
-                0x00000060                usb_str_manufacturer_descriptor
+                0x00000060                usb_str_product_descriptor
  .data.usb_str_serial_descriptor
                 0x000000a4       0x10 build/usb_descriptors.o
                 0x000000a4                usb_str_serial_descriptor
+ .data.usb_device_descriptor
+                0x000000b4       0x14 build/usb_descriptors.o
+                0x000000b4                usb_device_descriptor
  .data.usb_config_descriptor_size
-                0x000000b4        0x2 build/usb_descriptors.o
-                0x000000b4                usb_config_descriptor_size
- *fill*         0x000000b6        0x2 00
+                0x000000c8        0x2 build/usb_descriptors.o
+                0x000000c8                usb_config_descriptor_size
+ *fill*         0x000000ca        0x2 00
  .data.usb_config_descriptor
-                0x000000b8        0x4 build/usb_descriptors.o
-                0x000000b8                usb_config_descriptor
+                0x000000cc        0x4 build/usb_descriptors.o
+                0x000000cc                usb_config_descriptor
  .data.cached_sector
-                0x000000bc        0x4 build/mmc.o
-                0x000000c0                . = ALIGN (0x4)
-                0x000000c0                _edata = .
+                0x000000d0        0x4 build/mmc.o
+                0x000000d4                . = ALIGN (0x4)
+                0x000000d4                _edata = .
 
-.bss            0x000000c0     0x2b34 load address 0x800059f4
-                0x000000c0                . = ALIGN (0x4)
-                0x000000c0                _sbss = .
+.bss            0x000000d4     0x2b34 load address 0x80005a50
+                0x000000d4                . = ALIGN (0x4)
+                0x000000d4                _sbss = .
  *(.bss)
  *(.bss.*)
  .bss.button_def_pc
-                0x000000c0        0x2 build/main.o
+                0x000000d4        0x2 build/main.o
  .bss.current_attackmode
-                0x000000c2        0x1 build/main.o
-                0x000000c2                current_attackmode
- *fill*         0x000000c3        0x1 00
+                0x000000d6        0x1 build/main.o
+                0x000000d6                current_attackmode
+ *fill*         0x000000d7        0x1 00
  .bss.saved_num_lock_on
-                0x000000c4        0x2 build/main.o
- .bss.received_host_lock_led_reply
-                0x000000c6        0x2 build/main.o
- .bss.scroll_lock_on
-                0x000000c8        0x2 build/main.o
- .bss.saved_caps_lock_on
-                0x000000ca        0x2 build/main.o
- .bss.inside_button_handler
-                0x000000cc        0x1 build/main.o
- *fill*         0x000000cd        0x1 00
- .bss.caps_lock_on
-                0x000000ce        0x2 build/main.o
- .bss.num_lock_on
-                0x000000d0        0x2 build/main.o
- *fill*         0x000000d2        0x2 00
- .bss.host_configuration_request_count
-                0x000000d4        0x4 build/main.o
- .bss.button_push_received
                 0x000000d8        0x2 build/main.o
- .bss.call_stack_ptr
-                0x000000da        0x1 build/main.o
- *fill*         0x000000db        0x1 00
- .bss.jitter_max
+ .bss.received_host_lock_led_reply
+                0x000000da        0x2 build/main.o
+ .bss.scroll_lock_on
                 0x000000dc        0x2 build/main.o
+ .bss.saved_caps_lock_on
+                0x000000de        0x2 build/main.o
+ .bss.inside_button_handler
+                0x000000e0        0x1 build/main.o
+ *fill*         0x000000e1        0x1 00
+ .bss.caps_lock_on
+                0x000000e2        0x2 build/main.o
+ .bss.num_lock_on
+                0x000000e4        0x2 build/main.o
+ *fill*         0x000000e6        0x2 00
+ .bss.host_configuration_request_count
+                0x000000e8        0x4 build/main.o
+ .bss.button_push_received
+                0x000000ec        0x2 build/main.o
+ .bss.call_stack_ptr
+                0x000000ee        0x1 build/main.o
+ *fill*         0x000000ef        0x1 00
+ .bss.jitter_max
+                0x000000f0        0x2 build/main.o
  .bss.call_stack
-                0x000000de       0x40 build/main.o
- *fill*         0x0000011e        0x2 00
+                0x000000f2       0x40 build/main.o
+ *fill*         0x00000132        0x2 00
  .bss.payload_ram
-                0x00000120     0x2000 build/main.o
+                0x00000134     0x2000 build/main.o
  .bss.exfil_mode_enabled
-                0x00002120        0x2 build/main.o
+                0x00002134        0x2 build/main.o
  .bss.button_timeout
-                0x00002122        0x2 build/main.o
+                0x00002136        0x2 build/main.o
  .bss.button_user_defined
-                0x00002124        0x2 build/main.o
+                0x00002138        0x2 build/main.o
  .bss.led_continuous_show_storage_activity
-                0x00002126        0x2 build/main.o
+                0x0000213a        0x2 build/main.o
  .bss.jitter_enabled
-                0x00002128        0x2 build/main.o
+                0x0000213c        0x2 build/main.o
  .bss.payload_parse_speed
-                0x0000212a        0x2 build/main.o
+                0x0000213e        0x2 build/main.o
  .bss.saved_scroll_lock_on
-                0x0000212c        0x2 build/main.o
+                0x00002140        0x2 build/main.o
  .bss.variables
-                0x0000212e      0x800 build/main.o
+                0x00002142      0x800 build/main.o
  .bss.g_usb_ready
-                0x0000292e        0x1 build/main.o
+                0x00002942        0x1 build/main.o
  .bss.s_address
-                0x0000292f        0x1 build/usb_hid.o
- .bss.s_state   0x00002930        0x4 build/usb_hid.o
+                0x00002943        0x1 build/usb_hid.o
+ .bss.s_state   0x00002944        0x4 build/usb_hid.o
  .bss.s_out_callback
-                0x00002934        0x4 build/usb_hid.o
+                0x00002948        0x4 build/usb_hid.o
  .bss.s_configuration
-                0x00002938        0x1 build/usb_hid.o
+                0x0000294c        0x1 build/usb_hid.o
  .bss.serial_counter.8362
-                0x00002939        0x1 build/usb_hid.o
- *fill*         0x0000293a        0x2 00
+                0x0000294d        0x1 build/usb_hid.o
+ *fill*         0x0000294e        0x2 00
  .bss.s_callbacks
-                0x0000293c       0x14 build/usb_hid.o
+                0x00002950       0x14 build/usb_hid.o
  .bss.usb_custom_serial_set
-                0x00002950        0x1 build/usb_hid.o
-                0x00002950                usb_custom_serial_set
+                0x00002964        0x1 build/usb_hid.o
+                0x00002964                usb_custom_serial_set
  .bss.s_idle_rate
-                0x00002951        0x1 build/usb_hid.o
- *fill*         0x00002952        0x2 00
+                0x00002965        0x1 build/usb_hid.o
+ *fill*         0x00002966        0x2 00
  .bss.s_ctrl_buf
-                0x00002954       0x40 build/usb_hid.o
+                0x00002968       0x40 build/usb_hid.o
  .bss.sector_cache
-                0x00002994      0x200 build/mmc.o
- .bss.CardType  0x00002b94        0x1 build/mmc.o
- .bss.spi_fast  0x00002b95        0x1 build/mmc.o
- *fill*         0x00002b96        0x2 00
- .bss.FatFs     0x00002b98        0x4 build/pff.o
+                0x000029a8      0x200 build/mmc.o
+ .bss.CardType  0x00002ba8        0x1 build/mmc.o
+ .bss.spi_fast  0x00002ba9        0x1 build/mmc.o
+ *fill*         0x00002baa        0x2 00
+ .bss.FatFs     0x00002bac        0x4 build/pff.o
  *(COMMON)
- COMMON         0x00002b9c       0x2c build/main.o
-                0x00002b9c                fs
- COMMON         0x00002bc8       0x2c build/usb_msc.o
-                0x00002bc8                bot
-                0x00002bf4                . = ALIGN (0x4)
-                0x00002bf4                _ebss = .
+ COMMON         0x00002bb0       0x2c build/main.o
+                0x00002bb0                fs
+ COMMON         0x00002bdc       0x2c build/usb_msc.o
+                0x00002bdc                bot
+                0x00002c08                . = ALIGN (0x4)
+                0x00002c08                _ebss = .
 
-.stack          0x00002bf4      0x804 load address 0x800059f4
-                0x00002bf8                . = ALIGN (0x8)
- *fill*         0x00002bf4        0x4 00
-                0x00002bf8                _stack_end = .
-                0x000033f8                . = (. + 0x800)
- *fill*         0x00002bf8      0x800 00
-                0x000033f8                . = ALIGN (0x8)
-                0x000033f8                _stack_start = .
+.stack          0x00002c08      0x800 load address 0x80005a50
+                0x00002c08                . = ALIGN (0x8)
+                0x00002c08                _stack_end = .
+                0x00003408                . = (. + 0x800)
+ *fill*         0x00002c08      0x800 00
+                0x00003408                . = ALIGN (0x8)
+                0x00003408                _stack_start = .
 
 /DISCARD/
  *(.note.*)
  *(.comment)
  *(.debug*)
-                0x000033f8                PROVIDE (_stack, _stack_start)
-                0x000033f8                PROVIDE (__stack, _stack_start)
-                0x00002bf4                PROVIDE (__heap_start__, _ebss)
-                0x00002bf8                PROVIDE (__heap_end__, _stack_end)
+                0x00003408                PROVIDE (_stack, _stack_start)
+                0x00003408                PROVIDE (__stack, _stack_start)
+                0x00002c08                PROVIDE (__heap_start__, _ebss)
+                0x00002c08                PROVIDE (__heap_end__, _stack_end)
 OUTPUT(build/firmware.elf elf32-avr32)
