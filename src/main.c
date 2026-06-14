@@ -150,6 +150,9 @@ static inline uint32_t get_cpu_count(void) {
     return __builtin_mfsr(AVR32_COUNT);
 }
 
+void storage_activity_mark(void) {
+}
+
 static void send_keyboard_report(uint8_t modifier, uint8_t keycode) {
     keyboard_report_t report;
     memset(&report, 0, sizeof(report));
