@@ -205,20 +205,26 @@ static void delay_ms(uint32_t ms) {
 #define MOD_RALT    0x40
 
 static void send_keyboard_report(uint8_t modifier, uint8_t keycode) {
+    if (current_attackmode == 0 || current_attackmode == 2) return; /* No HID */
+
     keyboard_report_t report;
     memset(&report, 0, sizeof(report));
     report.modifier = modifier;
     report.keys[0]  = keycode;
     
     /* 1. Wait for endpoint ready.
-     * We use a longer timeout (50ms) to ensure reports aren't dropped during
-     * heavy host activity or enumeration. */
+     * We use a long timeout (2500ms) to ensure the payload automatically
+     * pauses and waits for the host to finish mounting the storage volume
+     * and initializing the HID driver. */
     uint32_t t0 = get_cpu_count();
     while (!usb_hid_in_endpoint_ready()) {
-        if ((get_cpu_count() - t0) > (CYCLES_PER_MS * 50u)) {
-            /* If we time out, we still try to send if it's a key-up (0,0)
-             * to avoid stuck keys, but for others we might skip. */
-            if (modifier == 0 && keycode == 0) break; 
+        if ((get_cpu_count() - t0) > (CYCLES_PER_MS * 2500u)) {
+            /* If we time out, the host is not polling (e.g. wall charger
+             * or completely frozen). We MUST flush the FIFO to clear any
+             * unread reports (like a key-down) so they don't get stuck
+             * forever when the host finally wakes up. */
+            AVR32_USBB.uerst |= AVR32_USBB_UERST_EPRST1_MASK;
+            AVR32_USBB.uerst &= ~AVR32_USBB_UERST_EPRST1_MASK;
             return;
         }
         usb_device_task();
@@ -226,8 +232,8 @@ static void send_keyboard_report(uint8_t modifier, uint8_t keycode) {
     
     usb_hid_send_report((uint8_t*)&report, sizeof(report));
 
-    /* 2. If this was a key-down, we wait for it to be actually sent
-     * to ensure the host sees the press before we possibly send a release. */
+    /* 2. Wait a short time for the host to actually fetch this report
+     * before we return. This guarantees the press and release are seen as distinct. */
     if (modifier != 0 || keycode != 0) {
         t0 = get_cpu_count();
         while (!usb_hid_in_endpoint_ready()) {
