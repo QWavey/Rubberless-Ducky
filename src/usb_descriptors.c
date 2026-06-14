@@ -1,5 +1,21 @@
 #include "usb_descriptors.h"
 #include <stddef.h>
+#include <string.h>
+
+uint8_t usb_custom_serial_set = 0;
+
+void usb_set_string_descriptor(uint8_t *desc, const char *str, uint8_t max_chars) {
+    uint8_t len = 0;
+    while (str[len] && len < max_chars) {
+        len++;
+    }
+    desc[0] = (uint8_t)(2 + len * 2);
+    desc[1] = 0x03;
+    for (uint8_t i = 0; i < len; i++) {
+        desc[2 + i * 2] = (uint8_t)str[i];
+        desc[3 + i * 2] = 0;
+    }
+}
 
 /* USB Standard Device Descriptor */
 uint8_t usb_device_descriptor[] = {

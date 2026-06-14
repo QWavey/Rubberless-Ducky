@@ -1,6 +1,7 @@
 #include "diskio.h"
 #include <avr32/io.h>
 #include <stdint.h>
+#include <string.h>
 
 #define SD_PIN_MISO 25  /* PA25 CAN be used as GPIO BEFORE usb_device_init() is called! */
 #define SD_PIN_MOSI 14
@@ -78,10 +79,59 @@ static volatile uint32_t cached_sector = 0xFFFFFFFF;
 static uint8_t sector_cache[512];
 static BYTE CardType;
 
+/* ---- Multi-sector cache ----
+ * PA25 = USBB D-. After usb_device_init(), SPI MISO is dead.
+ * Every sector PetitFS reads before USB init is cached here.
+ * SCSI READ_10 serves from this cache.
+ * FIFO eviction: when full, oldest slot is reused. */
+#define MC_MAX 32
+static uint32_t mc_sectors[MC_MAX];
+static uint8_t  mc_data[MC_MAX][512];
+static uint16_t mc_count = 0;
+static uint16_t mc_next = 0;       /* FIFO eviction slot */
+
+uint32_t mc_total_sectors = 0;     /* Real card capacity from CSD */
+uint32_t mc_partition_sectors = 0; /* Partition size from VBR BPB */
+
+static void mc_store(uint32_t sector, const uint8_t *data) {
+    for (uint16_t i = 0; i < mc_count; i++) {
+        if (mc_sectors[i] == sector) return; /* already cached */
+    }
+    uint16_t slot;
+    if (mc_count < MC_MAX) {
+        slot = mc_count;
+        mc_count++;
+    } else {
+        slot = mc_next;
+        mc_next = (mc_next + 1) % MC_MAX;
+    }
+    mc_sectors[slot] = sector;
+    memcpy(mc_data[slot], data, 512);
+    if (sector + 1 > mc_total_sectors) mc_total_sectors = sector + 1;
+}
+
+void mc_reset(void) {
+    mc_count = 0;
+    mc_next = 0;
+    cached_sector = 0xFFFFFFFF;
+}
+
+static int mc_find(uint32_t sector, uint8_t *buff) {
+    for (uint16_t i = 0; i < mc_count; i++) {
+        if (mc_sectors[i] == sector) {
+            memcpy(buff, mc_data[i], 512);
+            return 0;
+        }
+    }
+    return -1;
+}
+
 DSTATUS disk_initialize(void) {
     BYTE n, cmd, ty, ocr[4];
     volatile avr32_gpio_port_t *pa = _GPIO_PORT(0);
     cached_sector = 0xFFFFFFFF;
+    mc_count = 0;
+    mc_total_sectors = 0;
 
     /* DAT1/DAT2 Pullups */
     pa->gpers = (1u << 18) | (1u << 19);
@@ -127,7 +177,38 @@ DSTATUS disk_initialize(void) {
     CardType = ty;
     DESELECT();
     rcv_spi();
-    if (ty) spi_fast = 1; /* Initialization complete, switch to high-speed SPI! */
+
+    /* Read real card capacity from CSD while SPI is still alive */
+    if (ty) {
+        spi_fast = 1;
+        if (send_cmd(9, 0) == 0) {
+            uint16_t t = 40000;
+            while (rcv_spi() != 0xFE && --t);
+            if (t) {
+                uint8_t csd[16];
+                for (uint8_t i = 0; i < 16; i++) csd[i] = rcv_spi();
+                rcv_spi(); rcv_spi();
+                if ((csd[0] >> 6) == 1) {
+                    /* CSD v2 (SDHC/SDXC) */
+                    uint32_t c_size = ((uint32_t)(csd[7] & 0x3F) << 16)
+                                    | ((uint32_t)csd[8] << 8)
+                                    | csd[9];
+                    mc_total_sectors = (c_size + 1) * 1024;
+                } else {
+                    /* CSD v1 */
+                    uint32_t c_size = ((uint32_t)(csd[6] & 0x03) << 10)
+                                    | ((uint32_t)csd[7] << 2)
+                                    | (csd[8] >> 6);
+                    uint32_t c_size_mult = ((csd[9] & 0x03) << 1) | (csd[10] >> 7);
+                    uint32_t block_len = 1 << (csd[5] & 0x0F);
+                    mc_total_sectors = (c_size + 1) * (1 << (c_size_mult + 2)) * block_len / 512;
+                }
+            }
+            DESELECT();
+            rcv_spi();
+        }
+    }
+
     return ty ? 0 : STA_NOINIT;
 }
 
@@ -142,6 +223,8 @@ DRESULT disk_readp(BYTE* buff, DWORD sector, UINT offset, UINT count) {
                 for (int i = 0; i < 512; i++) sector_cache[i] = rcv_spi();
                 rcv_spi(); rcv_spi();
                 cached_sector = sector;
+                /* Store in multi-sector cache for post-USB reads */
+                mc_store(sector, sector_cache);
             } else {
                 return RES_ERROR;
             }
@@ -160,24 +243,12 @@ DRESULT disk_readp(BYTE* buff, DWORD sector, UINT offset, UINT count) {
 }
 
 DRESULT sd_read_sector(DWORD sector, BYTE *buff) {
-    DWORD cmd_sector = (CardType & 12) ? sector : (sector * 512);
-    if (send_cmd(17, cmd_sector) == 0) {
-        BYTE rc;
-        UINT bc = 40000;
-        do { rc = rcv_spi(); } while (rc == 0xFF && --bc);
-        if (rc == 0xFE) {
-            for (int i = 0; i < 512; i++) buff[i] = rcv_spi();
-            rcv_spi(); rcv_spi();
-            DESELECT(); rcv_spi();
-            return RES_OK;
-        }
-    }
-    DESELECT(); rcv_spi();
-    return RES_ERROR;
+    if (mc_find(sector, buff) == 0) return RES_OK;
+    return disk_readp(buff, sector, 0, 512);
 }
 
 DRESULT sd_write_sector(DWORD sector, const BYTE *buff) {
-    DWORD cmd_sector = (CardType & 12) ? sector : (sector * 512);
+    DWORD cmd_sector = (CardType == 12) ? sector : (sector * 512);
     if (send_cmd(24, cmd_sector) == 0) {
         sd_spi_transfer(0xFE);
         for (int i = 0; i < 512; i++) sd_spi_transfer(buff[i]);
@@ -187,9 +258,11 @@ DRESULT sd_write_sector(DWORD sector, const BYTE *buff) {
             UINT bc = 40000;
             while (rcv_spi() == 0 && --bc);
             DESELECT(); rcv_spi();
+            cached_sector = 0xFFFFFFFF;
             return RES_OK;
         }
     }
     DESELECT(); rcv_spi();
     return RES_ERROR;
 }
+

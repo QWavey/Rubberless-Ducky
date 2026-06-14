@@ -190,8 +190,6 @@ void usb_device_init(void)
     usbb_init();
 }
 
-uint8_t usb_custom_serial_set = 0;
-
 void usb_device_enable(void)
 {
     static uint8_t serial_counter = 0;
@@ -255,11 +253,16 @@ void usb_device_task(void)
     if (AVR32_USBB.udint & AVR32_USBB_UDINT_EORST_MASK) {
         AVR32_USBB.udintclr = AVR32_USBB_UDINTCLR_EORSTC_MASK;
 
-        /* Reset endpoints (EPRSTx are bits 16+) and keep them disabled during reset */
-        AVR32_USBB.uerst = (1 << (16 + EP_CONTROL)) | (1 << (16 + EP_HID_IN)) | (1 << (16 + EP_HID_OUT));
-        
-        /* Clear reset AND ENABLE endpoints (EPENx are bits 0+) */
-        AVR32_USBB.uerst = (1 << EP_CONTROL) | (1 << EP_HID_IN) | (1 << EP_HID_OUT);
+        extern uint8_t current_attackmode;
+        uint32_t ep_num = (1 << EP_CONTROL) | (1 << EP_HID_IN);
+        if (current_attackmode == 2 || current_attackmode == 3) {
+            ep_num |= (1 << 2) | (1 << 3);
+        }
+
+        /* Reset + allocate endpoints.  Bare writes are fine here —
+         * configure_hid_endpoints() re-configures everything after. */
+        AVR32_USBB.uerst = (ep_num << 16);
+        AVR32_USBB.uerst = ep_num;
 
         /* Configure EP0 (Control, 64 bytes) */
         AVR32_USBB.uecfg0 = (0 << AVR32_USBB_UECFG0_EPTYPE_OFFSET)  /* Control */
@@ -499,12 +502,10 @@ static void ep0_handle_setup(void)
 
             switch (desc_type) {
                 case DESC_DEVICE:
-                    memcpy(s_ctrl_buf, usb_device_descriptor, usb_device_descriptor_size);
-                    s_ctrl_buf[8] = current_vid & 0xFF;
-                    s_ctrl_buf[9] = current_vid >> 8;
-                    s_ctrl_buf[10] = current_pid & 0xFF;
-                    s_ctrl_buf[11] = current_pid >> 8;
-                    desc_ptr = s_ctrl_buf;
+                    /* Use the device descriptor as-is: apply_attackmode()
+                     * already wrote the XOR'd VID/PID into it.  Do NOT
+                     * overwrite with the raw current_vid/current_pid. */
+                    desc_ptr = usb_device_descriptor;
                     desc_len = usb_device_descriptor_size;
                     break;
 
@@ -602,18 +603,18 @@ static void ep0_handle_setup(void)
                 uint8_t ep = wIndex & 0x7F;
                 if (ep == 1) {
                     AVR32_USBB.uecon1clr = AVR32_USBB_UECON1CLR_STALLRQC_MASK;
-                    AVR32_USBB.uerst = AVR32_USBB_UERST_EPRST1_MASK;
-                    AVR32_USBB.uerst = 0;
+                    AVR32_USBB.uerst |= AVR32_USBB_UERST_EPRST1_MASK;
+                    AVR32_USBB.uerst &= ~AVR32_USBB_UERST_EPRST1_MASK;
                     AVR32_USBB.uecon1set = AVR32_USBB_UECON1SET_RSTDTS_MASK;
                 } else if (ep == 2) {
                     AVR32_USBB.uecon2clr = AVR32_USBB_UECON2CLR_STALLRQC_MASK;
-                    AVR32_USBB.uerst = AVR32_USBB_UERST_EPRST2_MASK;
-                    AVR32_USBB.uerst = 0;
+                    AVR32_USBB.uerst |= AVR32_USBB_UERST_EPRST2_MASK;
+                    AVR32_USBB.uerst &= ~AVR32_USBB_UERST_EPRST2_MASK;
                     AVR32_USBB.uecon2set = AVR32_USBB_UECON2SET_RSTDTS_MASK;
                 } else if (ep == 3) {
                     AVR32_USBB.uecon3clr = AVR32_USBB_UECON3CLR_STALLRQC_MASK;
-                    AVR32_USBB.uerst = AVR32_USBB_UERST_EPRST3_MASK;
-                    AVR32_USBB.uerst = 0;
+                    AVR32_USBB.uerst |= AVR32_USBB_UERST_EPRST3_MASK;
+                    AVR32_USBB.uerst &= ~AVR32_USBB_UERST_EPRST3_MASK;
                     AVR32_USBB.uecon3set = AVR32_USBB_UECON3SET_RSTDTS_MASK;
                 }
                 // When host clears stall on MSC endpoints, BOT spec says we reset data toggles

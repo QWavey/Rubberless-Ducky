@@ -26,6 +26,10 @@ extern uint8_t usb_str_manufacturer_descriptor[66]; // max 32 chars + header
 extern uint8_t usb_str_product_descriptor[66];
 extern uint8_t usb_str_serial_descriptor[14];
 
+extern uint8_t usb_custom_serial_set;
+
+void usb_set_string_descriptor(uint8_t *desc, const char *str, uint8_t max_chars);
+
 #endif /* USB_DESCRIPTORS_H_ */
 
 #define HID_IN_REPORT_SIZE 9
