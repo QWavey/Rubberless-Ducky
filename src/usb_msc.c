@@ -25,8 +25,8 @@ extern uint32_t mc_partition_sectors;
 
 /* BOT States */
 #define BOT_STATE_IDLE          0
-#define BOT_STATE_DATA_IN       1
-#define BOT_STATE_DATA_OUT      2
+#define BOT_STATE_DATA_IN       1  /* SCSI -> Host */
+#define BOT_STATE_DATA_OUT      2  /* Host -> SCSI */
 #define BOT_STATE_CSW           3
 
 struct {
@@ -41,6 +41,13 @@ struct {
     
     uint32_t data_remaining;
     uint32_t csw_status;
+
+    /* Multi-block transfer state */
+    uint32_t transfer_lba;
+    uint16_t transfer_blocks;
+    uint16_t transfer_done;
+    uint8_t  sec_buf[512];
+    uint16_t sub_block_ptr;
 } bot;
 
 static const uint8_t inquiry_data[] = {
@@ -81,14 +88,6 @@ static void msc_send_csw(uint8_t status) {
     bot.state = BOT_STATE_CSW;
 }
 
-static void ep3_wait_tx_ready(void) {
-    while (!(AVR32_USBB.uesta3 & AVR32_USBB_UESTA3_TXINI_MASK));
-}
-
-static void ep2_wait_rx_ready(void) {
-    while (!(AVR32_USBB.uesta2 & AVR32_USBB_UESTA2_RXOUTI_MASK));
-}
-
 static void ep3_stall(void) {
     AVR32_USBB.uecon3set = AVR32_USBB_UECON3SET_STALLRQS_MASK;
 }
@@ -97,10 +96,10 @@ static void ep2_stall(void) {
     AVR32_USBB.uecon2set = AVR32_USBB_UECON2SET_STALLRQS_MASK;
 }
 
-static void ep3_in_xfer(const uint8_t *data, uint32_t len) {
+static void ep3_in_xfer_sync(const uint8_t *data, uint32_t len) {
     const uint8_t *p = data;
     while (len > 0) {
-        ep3_wait_tx_ready();
+        while (!(AVR32_USBB.uesta3 & AVR32_USBB_UESTA3_TXINI_MASK));
         uint32_t chunk = len;
         if (chunk > 64) chunk = 64;
         for (uint32_t i = 0; i < chunk; i++) USBB_EP_FIFO(MSC_EP_IN)[i] = p[i];
@@ -121,7 +120,7 @@ static void process_scsi_command(void) {
             uint32_t len = sizeof(inquiry_data);
             if (len > alloc_len) len = alloc_len;
             if (len > bot.dCBWDataTransferLength) len = bot.dCBWDataTransferLength;
-            ep3_in_xfer(inquiry_data, len);
+            ep3_in_xfer_sync(inquiry_data, len);
             bot.data_remaining = (len < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - len : 0;
             msc_send_csw(0x00);
             break;
@@ -132,24 +131,24 @@ static void process_scsi_command(void) {
             alloc_len = bot.CBWCB[4];
             if (alloc_len > 18) alloc_len = 18;
             if (alloc_len > bot.dCBWDataTransferLength) alloc_len = bot.dCBWDataTransferLength;
-            sense[0]  = 0x70;  /* Current errors, fixed format */
-            sense[2]  = 0x00;  /* No sense */
-            sense[7]  = 10;    /* Additional sense length */
-            ep3_in_xfer(sense, alloc_len);
+            sense[0]  = 0x70;
+            sense[2]  = 0x00;
+            sense[7]  = 10;
+            ep3_in_xfer_sync(sense, alloc_len);
             bot.data_remaining = (alloc_len < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - alloc_len : 0;
             msc_send_csw(0x00);
             break;
         }
         case SCSI_MODE_SENSE_6: {
             uint8_t mode[4];
-            mode[0] = 3;    /* Mode data length (excluding this byte) */
-            mode[1] = 0x00; /* Medium type: Default */
-            mode[2] = 0x00; /* Device-specific: Not write-protected */
-            mode[3] = 0;    /* Block descriptor length */
+            mode[0] = 3;
+            mode[1] = 0x00;
+            mode[2] = 0x00;
+            mode[3] = 0;
             alloc_len = bot.CBWCB[4];
             if (alloc_len > 4) alloc_len = 4;
             if (alloc_len > bot.dCBWDataTransferLength) alloc_len = bot.dCBWDataTransferLength;
-            ep3_in_xfer(mode, alloc_len);
+            ep3_in_xfer_sync(mode, alloc_len);
             bot.data_remaining = (alloc_len < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - alloc_len : 0;
             msc_send_csw(0x00);
             break;
@@ -157,22 +156,17 @@ static void process_scsi_command(void) {
         case SCSI_MODE_SENSE_10: {
             uint8_t mode[8];
             memset(mode, 0, sizeof(mode));
-            mode[0] = 7;    /* Mode data length (MSB) */
-            mode[1] = 0;    /* Mode data length (LSB) */
+            mode[0] = 7;
             alloc_len = ((uint32_t)bot.CBWCB[7] << 8) | bot.CBWCB[8];
             if (alloc_len > 8) alloc_len = 8;
             if (alloc_len > bot.dCBWDataTransferLength) alloc_len = bot.dCBWDataTransferLength;
-            ep3_in_xfer(mode, alloc_len);
+            ep3_in_xfer_sync(mode, alloc_len);
             bot.data_remaining = (alloc_len < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - alloc_len : 0;
             msc_send_csw(0x00);
             break;
         }
         case SCSI_TEST_UNIT_READY:
-            msc_send_csw(0x00);
-            break;
         case SCSI_START_STOP_UNIT:
-            msc_send_csw(0x00);
-            break;
         case SCSI_PREVENT_ALLOW:
             msc_send_csw(0x00);
             break;
@@ -182,9 +176,9 @@ static void process_scsi_command(void) {
             uint8_t cap[8] = {
                 (uint8_t)(last_lba >> 24), (uint8_t)(last_lba >> 16),
                 (uint8_t)(last_lba >> 8),  (uint8_t)(last_lba),
-                0x00, 0x00, 0x02, 0x00  /* block size: 512 */
+                0x00, 0x00, 0x02, 0x00
             };
-            ep3_in_xfer(cap, 8);
+            ep3_in_xfer_sync(cap, 8);
             bot.data_remaining = (8 < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - 8 : 0;
             msc_send_csw(0x00);
             break;
@@ -194,82 +188,43 @@ static void process_scsi_command(void) {
             uint32_t disk_sectors = mc_partition_sectors > 0 ? mc_partition_sectors : mc_total_sectors;
             uint32_t blocks = disk_sectors > 0 ? disk_sectors : 0x000FFFFF;
             uint8_t fmt_cap[12] = {
-                0x00, 0x00, 0x00, 0x08, /* capacity list header: length = 8 */
+                0x00, 0x00, 0x00, 0x08,
                 (uint8_t)(blocks >> 24), (uint8_t)(blocks >> 16),
                 (uint8_t)(blocks >> 8),  (uint8_t)(blocks),
-                0x02,                    /* descriptor code: formatted media */
-                0x00, 0x02, 0x00         /* block length: 512 (0x0200) */
+                0x02,
+                0x00, 0x02, 0x00
             };
-            uint32_t alloc_len = ((uint32_t)bot.CBWCB[7] << 8) | bot.CBWCB[8];
             uint32_t len = sizeof(fmt_cap);
+            alloc_len = ((uint32_t)bot.CBWCB[7] << 8) | bot.CBWCB[8];
             if (len > alloc_len) len = alloc_len;
             if (len > bot.dCBWDataTransferLength) len = bot.dCBWDataTransferLength;
-            ep3_in_xfer(fmt_cap, len);
+            ep3_in_xfer_sync(fmt_cap, len);
             bot.data_remaining = (len < bot.dCBWDataTransferLength) ? bot.dCBWDataTransferLength - len : 0;
             msc_send_csw(0x00);
             break;
         }
         
         case SCSI_READ_10: {
-            uint32_t lba = (bot.CBWCB[2] << 24) | (bot.CBWCB[3] << 16) | (bot.CBWCB[4] << 8) | bot.CBWCB[5];
-            uint16_t blocks = (bot.CBWCB[7] << 8) | bot.CBWCB[8];
-            uint8_t sec_buf[512];
-            uint8_t csw = 0x00;
-            uint16_t sectors_sent = 0;
-            for (uint16_t b = 0; b < blocks; b++) {
-                if (sd_read_sector(lba + b, sec_buf) != 0) {
-                    ep3_stall();
-                    csw = 0x01;
-                    break;
-                }
-                ep3_in_xfer(sec_buf, 512);
-                sectors_sent++;
-            }
-            bot.data_remaining = (csw == 0x01)
-                ? (uint32_t)(blocks - sectors_sent) * 512 : 0;
-            msc_send_csw(csw);
-            extern void storage_activity_mark(void);
-            storage_activity_mark();
+            bot.transfer_lba    = (bot.CBWCB[2] << 24) | (bot.CBWCB[3] << 16) | (bot.CBWCB[4] << 8) | bot.CBWCB[5];
+            bot.transfer_blocks = (bot.CBWCB[7] << 8) | bot.CBWCB[8];
+            bot.transfer_done   = 0;
+            bot.sub_block_ptr   = 512; /* triggers immediate SD read */
+            bot.state           = BOT_STATE_DATA_IN;
             break;
         }
 
         case SCSI_WRITE_10: {
-            uint32_t lba = (bot.CBWCB[2] << 24) | (bot.CBWCB[3] << 16) | (bot.CBWCB[4] << 8) | bot.CBWCB[5];
-            uint16_t blocks = (bot.CBWCB[7] << 8) | bot.CBWCB[8];
-            uint8_t sec_buf[512];
-            uint8_t csw = 0x00;
-            uint16_t sectors_written = 0;
-            for (uint16_t b = 0; b < blocks; b++) {
-                uint8_t *ptr = sec_buf;
-                for (int p = 0; p < 512 / 64; p++) {
-                    ep2_wait_rx_ready();
-                    for (int i = 0; i < 64; i++) {
-                        *ptr++ = USBB_EP_FIFO(MSC_EP_OUT)[i];
-                    }
-                    AVR32_USBB.uesta2clr = AVR32_USBB_UESTA2CLR_RXOUTIC_MASK;
-                    AVR32_USBB.uecon2clr = AVR32_USBB_UECON2CLR_FIFOCONC_MASK;
-                }
-                if (sd_write_sector(lba + b, sec_buf) != 0) {
-                    ep2_stall();
-                    csw = 0x01;
-                    break;
-                }
-                sectors_written++;
-            }
-            bot.data_remaining = (csw == 0x01)
-                ? (uint32_t)(blocks - sectors_written) * 512 : 0;
-            msc_send_csw(csw);
-            extern void storage_activity_mark(void);
-            storage_activity_mark();
+            bot.transfer_lba    = (bot.CBWCB[2] << 24) | (bot.CBWCB[3] << 16) | (bot.CBWCB[4] << 8) | bot.CBWCB[5];
+            bot.transfer_blocks = (bot.CBWCB[7] << 8) | bot.CBWCB[8];
+            bot.transfer_done   = 0;
+            bot.sub_block_ptr   = 0;
+            bot.state           = BOT_STATE_DATA_OUT;
             break;
         }
         default:
-            /* Unknown command: stall data phase and fail */
             if (bot.dCBWDataTransferLength > 0) {
-                if (bot.bmCBWFlags & 0x80)
-                    ep3_stall();
-                else
-                    ep2_stall();
+                if (bot.bmCBWFlags & 0x80) ep3_stall();
+                else                      ep2_stall();
             }
             msc_send_csw(0x01);
             break;
@@ -288,9 +243,7 @@ void usb_msc_task(void) {
                 bot.bCBWLUN = fifo[13];
                 bot.bCBWCBLength = fifo[14];
                 memcpy(bot.CBWCB, &fifo[15], 16);
-                
                 bot.data_remaining = bot.dCBWDataTransferLength;
-                
                 AVR32_USBB.uesta2clr = AVR32_USBB_UESTA2CLR_RXOUTIC_MASK;
                 AVR32_USBB.uecon2clr = AVR32_USBB_UECON2CLR_FIFOCONC_MASK;
                 process_scsi_command();
@@ -298,6 +251,66 @@ void usb_msc_task(void) {
                 AVR32_USBB.uesta2clr = AVR32_USBB_UESTA2CLR_RXOUTIC_MASK;
                 AVR32_USBB.uecon2clr = AVR32_USBB_UECON2CLR_FIFOCONC_MASK;
                 AVR32_USBB.uecon2set = AVR32_USBB_UECON2SET_STALLRQS_MASK;
+            }
+        }
+    } else if (bot.state == BOT_STATE_DATA_IN) {
+        /* SCSI -> Host (READ_10) */
+        if (bot.transfer_done >= bot.transfer_blocks) {
+            bot.data_remaining = 0;
+            msc_send_csw(0x00);
+            return;
+        }
+        if (bot.sub_block_ptr >= 512) {
+            /* Current sector fully sent, read next one from SD */
+            if (sd_read_sector(bot.transfer_lba + bot.transfer_done, bot.sec_buf) != 0) {
+                ep3_stall();
+                bot.data_remaining = (uint32_t)(bot.transfer_blocks - bot.transfer_done) * 512;
+                msc_send_csw(0x01);
+                return;
+            }
+            bot.transfer_done++;
+            bot.sub_block_ptr = 0;
+            extern void storage_activity_mark(void);
+            storage_activity_mark();
+        }
+        /* Try to send a 64-byte chunk of the current sector */
+        if (AVR32_USBB.uesta3 & AVR32_USBB_UESTA3_TXINI_MASK) {
+            volatile uint8_t *fifo = (volatile uint8_t *)USBB_EP_FIFO(MSC_EP_IN);
+            for (int i = 0; i < 64; i++) {
+                fifo[i] = bot.sec_buf[bot.sub_block_ptr + i];
+            }
+            AVR32_USBB.uesta3clr = AVR32_USBB_UESTA3CLR_TXINIC_MASK;
+            AVR32_USBB.uecon3clr = AVR32_USBB_UECON3CLR_FIFOCONC_MASK;
+            bot.sub_block_ptr += 64;
+        }
+    } else if (bot.state == BOT_STATE_DATA_OUT) {
+        /* Host -> SCSI (WRITE_10) */
+        if (bot.transfer_done >= bot.transfer_blocks) {
+            bot.data_remaining = 0;
+            msc_send_csw(0x00);
+            return;
+        }
+        /* Wait for a 64-byte chunk from host */
+        if (AVR32_USBB.uesta2 & AVR32_USBB_UESTA2_RXOUTI_MASK) {
+            volatile uint8_t *fifo = (volatile uint8_t *)USBB_EP_FIFO(MSC_EP_OUT);
+            for (int i = 0; i < 64; i++) {
+                bot.sec_buf[bot.sub_block_ptr + i] = fifo[i];
+            }
+            AVR32_USBB.uesta2clr = AVR32_USBB_UESTA2CLR_RXOUTIC_MASK;
+            AVR32_USBB.uecon2clr = AVR32_USBB_UECON2CLR_FIFOCONC_MASK;
+            bot.sub_block_ptr += 64;
+            if (bot.sub_block_ptr >= 512) {
+                /* Sector buffer full, write to SD */
+                if (sd_write_sector(bot.transfer_lba + bot.transfer_done, bot.sec_buf) != 0) {
+                    ep2_stall();
+                    bot.data_remaining = (uint32_t)(bot.transfer_blocks - bot.transfer_done) * 512;
+                    msc_send_csw(0x01);
+                    return;
+                }
+                bot.transfer_done++;
+                bot.sub_block_ptr = 0;
+                extern void storage_activity_mark(void);
+                storage_activity_mark();
             }
         }
     } else if (bot.state == BOT_STATE_CSW) {
@@ -309,7 +322,6 @@ void usb_msc_task(void) {
             fifo[8] = bot.data_remaining & 0xFF; fifo[9] = (bot.data_remaining>>8)&0xFF;
             fifo[10] = (bot.data_remaining>>16)&0xFF; fifo[11] = (bot.data_remaining>>24)&0xFF;
             fifo[12] = bot.csw_status;
-            
             AVR32_USBB.uesta3clr = AVR32_USBB_UESTA3CLR_TXINIC_MASK;
             AVR32_USBB.uecon3clr = AVR32_USBB_UECON3CLR_FIFOCONC_MASK;
             bot.state = BOT_STATE_IDLE;
