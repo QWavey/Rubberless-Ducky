@@ -88,6 +88,17 @@ bool usb_hid_send_report(const uint8_t *data, uint8_t length);
  */
 bool usb_hid_in_endpoint_ready(void);
 
+/**
+ * @brief Temporarily suppress mass-storage (MSC) servicing.
+ *
+ * When true, usb_device_task() will NOT run usb_msc_task(), so a host-side
+ * SD-card read/write cannot hog the single-threaded main loop while a HID
+ * keystroke (press/release) is being delivered.  The host simply NAKs the
+ * storage endpoint for those few milliseconds and retries.  Must be cleared
+ * again once the keystroke is done so the SD card can finish mounting.
+ */
+void usb_msc_set_suppressed(bool suppressed);
+
 #endif /* USB_HID_H_ */
 
 void ep0_send(const uint8_t *data, uint16_t length, uint16_t requested_length);

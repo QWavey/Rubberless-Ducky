@@ -102,6 +102,10 @@ static usb_event_callback_t   s_callbacks[5]      = { NULL };
 static usb_hid_out_callback_t s_out_callback      = NULL;
 static uint8_t                s_ctrl_buf[64];
 
+/* When set, usb_device_task() skips usb_msc_task() so a storage transfer can
+ * never block the loop while a HID keystroke is being delivered. */
+static volatile bool          s_msc_suppressed    = false;
+
 /* =========================================================================
  * USBB Peripheral access helpers
  * ======================================================================= */
@@ -242,6 +246,11 @@ bool usb_hid_in_endpoint_ready(void)
     return !!(AVR32_USBB.uesta1 & AVR32_USBB_UESTA1_TXINI_MASK);
 }
 
+void usb_msc_set_suppressed(bool suppressed)
+{
+    s_msc_suppressed = suppressed;
+}
+
 bool usb_hid_send_report(const uint8_t *data, uint8_t length)
 {
     if (!usb_hid_in_endpoint_ready()) {
@@ -318,7 +327,12 @@ void usb_device_task(void)
     }
     
     extern uint8_t current_attackmode;
-    if (s_state == DEVICE_STATE_CONFIGURED && (current_attackmode == 2 || current_attackmode == 3)) {
+    if (s_state == DEVICE_STATE_CONFIGURED && (current_attackmode == 2 || current_attackmode == 3)
+        && !s_msc_suppressed) {
+        /* Storage is only serviced when no keystroke is in flight.  This keeps
+         * a multi-sector SD read from stalling the loop mid-keystroke, which
+         * was causing dropped key-releases (stuck/repeated keys) and uneven
+         * typing speed in composite HID+STORAGE mode. */
         usb_msc_task();
     }
 }

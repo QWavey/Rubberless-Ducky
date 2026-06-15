@@ -25,6 +25,47 @@
  * 10. No SD card or no INJECT.BIN → device goes silent (no typing, no button
  *     reactions, no CapsLock response) — just Red LED + USB idle.
  * 11. system_leds_enabled guards every LED write from the HID-out callback.
+ * 12. HID typing and MSC (SD card) servicing no longer race in composite
+ *     HID+STORAGE mode.  They are time-sliced so the keyboard always has
+ *     priority; the SD card mounts only when the payload is idle:
+ *
+ *       (a) wait_for_host_polling() runs IMMEDIATELY after configuration (no
+ *           settle delay) and blocks until the host drains an invisible priming
+ *           report.  This lands the first keystroke inside the host's early
+ *           HID-polling window — before the slow storage mount — and fixes the
+ *           dropped leading character.  Storage stays ENABLED across it so the
+ *           composite device finishes enumerating.
+ *
+ *       (b) During active typing, storage is SUPPRESSED, so a multi-sector SD
+ *           read can never stall the single-threaded loop mid-keystroke.
+ *
+ *       (c) Storage is RE-ENABLED across DELAY, WAIT_FOR_BUTTON_PRESS, and
+ *           the lock-key wait loops, so Windows can actually finish the SD
+ *           mount during those idle windows.  This is only safe because
+ *           usb_msc.c was rewritten into a one-step-at-a-time state
+ *           machine: each call to usb_msc_task() does at most one CBW
+ *           parse, one 64-byte chunk transfer, one SD sector read, or one
+ *           CSW write, then returns.  The old version ran a whole SCSI
+ *           command to completion in one call (with no-timeout spin-waits
+ *           between 64-byte chunks), which sank the main loop into
+ *           Windows's mount storm and made typing wait for the mount.
+ *
+ *       (c') During those idle windows the firmware also runs
+ *           usb_pump_with_keepalive() — between MSC ticks it periodically
+ *           queues an invisible (no-key) HID report so the host's HID
+ *           driver keeps polling the keyboard endpoint at its 10 ms
+ *           bInterval.  Without that the host's HID stack would go quiet
+ *           and the leading chars of the next STRING would land in a dead
+ *           zone (the "on..." from "Press the button..." bug).  We do NOT
+ *           block on the host actually draining each keep-alive — that
+ *           would re-introduce the "typing only after mount" failure.
+ *
+ *       (d) send_keyboard_report() waits for the host to collect BOTH the press
+ *           and the release (never dropping either) so there are no stuck or
+ *           duplicated keys; the timeout is large purely as an anti-hang guard,
+ *           never hit during normal typing, so characters are never lost.
+ *
+ *     Per-key delay is 1 ms now that correctness no longer relies on it.
  */
 
 #include <stdint.h>
@@ -130,11 +171,15 @@ static uint8_t  call_stack_ptr        = 0;
 static uint16_t button_def_pc         = 0;
 static bool     inside_button_handler = false;
 
-/* Per-character inter-key delay (ms).  5 ms is the sweet spot: fast enough
- * for payloads, slow enough that no host ever drops a character or holds the
- * last key pressed.  Payloads can override via STRING_DELAY if the compiler
- * emits the DELAY_VAR opcode around each character. */
-static uint16_t char_delay_ms = 5;
+/* Per-character inter-key delay (ms).  send_keyboard_report() waits for the
+ * host to actually collect each press and release, so this delay only paces
+ * the keystrokes.  3 ms is a balance: 1 ms could drop a character every few
+ * words when an MSC tick landed between the press and release of the same
+ * key ("utton" / "btton" / "button.."), while 8 ms felt sluggish.  3 ms
+ * still leaves slack between every press and the matching release so they
+ * don't coalesce on the host.  Payloads can override via STRING_DELAY if
+ * the compiler emits the DELAY_VAR opcode. */
+static uint16_t char_delay_ms = 8;
 
 /* ---- LED convenience helpers ---- */
 /* All LED changes go through these so system_leds_enabled is always respected */
@@ -197,6 +242,70 @@ static void delay_ms(uint32_t ms) {
     }
 }
 
+/* Pump the USB stack while periodically refilling the HID IN bank with an
+ * empty (no-key, no-modifier) report.  Used inside payload-idle windows
+ * (DELAY, WAIT_FOR_BUTTON_PRESS, WAIT_FOR_CAPS/NUM/SCROLL_*) so the host's
+ * HID driver keeps polling the keyboard endpoint at its 10 ms bInterval
+ * instead of going quiet.
+ *
+ * If the host stops seeing HID reports for a stretch, Windows shifts focus
+ * entirely to enumerating the (slow) SD mount, and the next STRING's
+ * leading chars land in a dead zone — the "on..." from "Press the
+ * button..." bug.  Each keep-alive packet is a "no keys currently pressed"
+ * report (identical to a key-release), so it's a no-op for the host's HID
+ * stack but still tickles the polling cadence.
+ *
+ * We don't wait for the host to actually drain the keep-alive — that would
+ * stall typing for the duration of the SD mount.  We just keep handing it
+ * reports whenever the bank is free and pump usb_device_task(). */
+static void usb_pump_with_keepalive(void) {
+    static uint32_t last_keepalive = 0;
+    usb_device_task();
+
+    uint32_t now = get_cpu_count();
+    if ((now - last_keepalive) >= (CYCLES_PER_MS * 8u)) {
+        if (usb_hid_in_endpoint_ready()) {
+            keyboard_report_t empty;
+            memset(&empty, 0, sizeof(empty));
+            usb_hid_send_report((uint8_t*)&empty, sizeof(empty));
+        }
+        last_keepalive = now;
+    }
+}
+
+/* DELAY opcode handler.
+ *
+ * MSC is RE-ENABLED for the duration of the delay so Windows can make
+ * progress on the SD mount in parallel with typing.  This is safe because
+ * usb_msc_task() (in usb_msc.c) is now a one-step-at-a-time state machine
+ * — each call does at most one chunk transfer or one SD sector, bounded
+ * to a few ms — instead of running an entire SCSI command to completion
+ * with no-timeout spin-waits as it used to.
+ *
+ * HID is kept warm by usb_pump_with_keepalive() so the host's HID driver
+ * keeps polling the keyboard endpoint at its 10 ms bInterval; without it
+ * the leading chars of the next STRING would land in a dead zone (the
+ * "on..." from "Press the button..." bug).
+ *
+ * MSC is re-suppressed at the end so the very first key of the following
+ * STRING goes out without an MSC tick in the way. */
+static void payload_delay(uint32_t ms) {
+    usb_msc_set_suppressed(false);
+
+    if (jitter_enabled && jitter_max > 0) {
+        ms += get_random(0, jitter_max);
+    }
+
+    while (ms--) {
+        uint32_t start = get_cpu_count();
+        while ((get_cpu_count() - start) < CYCLES_PER_MS) {
+            usb_pump_with_keepalive();
+        }
+    }
+
+    usb_msc_set_suppressed(true);
+}
+
 /* ---- Modifier bit masks ---- */
 #define MOD_LCTRL   0x01
 #define MOD_LSHIFT  0x02
@@ -204,39 +313,86 @@ static void delay_ms(uint32_t ms) {
 #define MOD_LGUI    0x08
 #define MOD_RALT    0x40
 
+/* Safety timeout for a single HID report.  During typing MSC is suppressed, so
+ * the host polls the keyboard endpoint every ~1 ms and a report is normally
+ * accepted almost immediately.  This bound is large on purpose: it must never
+ * be hit during normal (even heavily loaded) typing — it only stops an infinite
+ * hang if the host has genuinely stopped polling (e.g. unplugged).  Keeping it
+ * large is what guarantees we don't *drop* characters under load. */
+#define HID_TX_TIMEOUT_MS 2000u
+
+/*
+ * Send one keyboard report and BLOCK until the host has accepted it.
+ *
+ * Two phases, both important:
+ *   1) wait for the IN bank to be free, then write+arm the report;
+ *   2) wait until the host's IN token drains it (bank free again).
+ *
+ * Phase 2 runs for presses AND releases.  It guarantees ordering (a press is
+ * never coalesced with its release) and, crucially, that a release is never
+ * dropped — a dropped release is what produced stuck/repeated keys
+ * ("Presss thee bbuutton").  We never silently skip a report on a short stall;
+ * we wait it out (up to HID_TX_TIMEOUT_MS) so characters are never lost.
+ */
 static void send_keyboard_report(uint8_t modifier, uint8_t keycode) {
     keyboard_report_t report;
     memset(&report, 0, sizeof(report));
     report.modifier = modifier;
     report.keys[0]  = keycode;
-    
-    /* 1. Wait for endpoint ready.
-     * We use a longer timeout (50ms) to ensure reports aren't dropped during
-     * heavy host activity or enumeration. */
+
+    /* Phase 1: bank free → queue the report. */
     uint32_t t0 = get_cpu_count();
     while (!usb_hid_in_endpoint_ready()) {
-        if ((get_cpu_count() - t0) > (CYCLES_PER_MS * 50u)) {
-            /* If we time out, we still try to send if it's a key-up (0,0)
-             * to avoid stuck keys, but for others we might skip. */
-            if (modifier == 0 && keycode == 0) break; 
-            return;
-        }
+        if ((get_cpu_count() - t0) > (CYCLES_PER_MS * HID_TX_TIMEOUT_MS)) return;
         usb_device_task();
     }
-    
     usb_hid_send_report((uint8_t*)&report, sizeof(report));
 
-    /* 2. If this was a key-down, we wait for it to be actually sent
-     * to ensure the host sees the press before we possibly send a release. */
-    if (modifier != 0 || keycode != 0) {
-        t0 = get_cpu_count();
-        while (!usb_hid_in_endpoint_ready()) {
-            if ((get_cpu_count() - t0) > (CYCLES_PER_MS * 10u)) break;
-            usb_device_task();
-        }
+    /* Phase 2: wait for the host to actually collect it. */
+    t0 = get_cpu_count();
+    while (!usb_hid_in_endpoint_ready()) {
+        if ((get_cpu_count() - t0) > (CYCLES_PER_MS * HID_TX_TIMEOUT_MS)) break;
+        usb_device_task();
     }
 }
 
+
+/* ---- Wait until the host is actually polling the HID IN endpoint ----
+ *
+ * g_usb_ready / a fixed delay only tell us the device is *configured*, not that
+ * the host's HID driver is up and collecting reports.  Typing before that point
+ * silently loses the leading characters ("ress…", "on…").
+ *
+ * Here we queue one EMPTY (no-key, invisible) report and wait for the hardware
+ * to mark the bank free again — which only happens after the host has sent an
+ * IN token and read the packet.  That is a direct, host-agnostic confirmation
+ * that polling has begun.  MSC must NOT be suppressed while we do this: on a
+ * composite device the host finishes bringing the device up (and starts HID
+ * polling) only once the storage interface is also responding. */
+static void wait_for_host_polling(void) {
+    keyboard_report_t empty;
+    memset(&empty, 0, sizeof(empty));
+
+    uint32_t overall = get_cpu_count();
+    for (;;) {
+        /* Wait for a free bank, then queue one invisible (no-key) report. */
+        while (!usb_hid_in_endpoint_ready()) {
+            if ((get_cpu_count() - overall) > (CYCLES_PER_MS * 10000u)) return; /* fail-safe */
+            usb_device_task();
+        }
+        usb_hid_send_report((uint8_t*)&empty, sizeof(empty));
+
+        /* Watch for the host to drain it.  The instant the bank frees again, an
+         * IN token has been serviced → the host is polling → safe to type. */
+        uint32_t t0 = get_cpu_count();
+        while ((get_cpu_count() - t0) < (CYCLES_PER_MS * 250u)) {
+            usb_device_task();
+            if (usb_hid_in_endpoint_ready()) return;
+            if ((get_cpu_count() - overall) > (CYCLES_PER_MS * 10000u)) return;
+        }
+        /* Still not drained after 250 ms — loop and re-prime. */
+    }
+}
 
 /* ---- Full printable-ASCII → HID keycode table ----
  * Covers every character that can appear in a STRING command.
@@ -298,6 +454,9 @@ static void type_char(char c) {
     /* Only skip if keycode is truly 0 AND the char isn't one of the zero-keycode
      * specials (space=0x2C, newline=0x28, tab=0x2B — all handled above). */
     if (e.keycode == 0) return;
+    /* Storage is already suppressed for the whole active-typing region (see the
+     * execution loop), so a press/release pair can never be interrupted by an
+     * SD read. */
     send_keyboard_report(e.modifier, e.keycode);
     delay_ms(char_delay_ms);
     send_keyboard_report(0, 0);
@@ -692,6 +851,32 @@ int main(void)
 
     start_usb_and_wait();
 
+    /* ----------------------------------------------------------------
+     * Gate the first keystroke on the host actually polling the keyboard.
+     *
+     * g_usb_ready only means SET_CONFIGURATION arrived — not that the host's
+     * HID driver is up and sending IN tokens.  Right after configuration the
+     * host opens an early window where it polls the keyboard endpoint; we must
+     * confirm that and type IMMEDIATELY (no settle delay).  If we waited, the
+     * host would move on to the slow storage mount and our keystrokes would be
+     * lost in that dead zone until the mount finished — the "HID only works
+     * after the SD card mounted" symptom.
+     *
+     * wait_for_host_polling() returns the instant the host drains an invisible
+     * priming report, which normally happens in that early window, well before
+     * the mount completes.  Storage stays ENABLED across the handshake so the
+     * composite device can finish coming up.
+     *
+     * Only relevant when HID is active (attackmode 1 = HID, 3 = HID+STORAGE). */
+    if (current_attackmode == 1 || current_attackmode == 3) {
+        wait_for_host_polling();
+    }
+
+    /* Host is polling HID now → dedicate the bus to typing.  The SD mount is
+     * allowed to proceed only in the payload's idle windows (long DELAY,
+     * WAIT_FOR_BUTTON_PRESS, end-of-payload). */
+    usb_msc_set_suppressed(true);
+
     g_payload_executing = true;
     /* Green blinking = payload executing */
     blink_last = get_cpu_count();
@@ -834,7 +1019,7 @@ int main(void)
 
         /* ---- DELAY_VAR 0xe7e9 ---- */
         if (word == 0xe7e9) {
-            delay_ms(read_var(get_word(pc+1)));
+            payload_delay(read_var(get_word(pc+1)));
             pc += 2; continue;
         }
 
@@ -849,9 +1034,10 @@ int main(void)
         }
 
 
-        /* ---- DELAY literal: high byte 0x00, low byte = ms ---- */
+        /* ---- DELAY literal: high byte 0x00, low byte = ms (≤255, always
+         *      HID-exclusive — far below the idle threshold) ---- */
         if ((word >> 8) == 0x00) {
-            delay_ms(word & 0xFF);
+            payload_delay(word & 0xFF);
             pc++; continue;
         }
 
@@ -867,6 +1053,7 @@ int main(void)
                     gpio_low (LED_PORT_GREEN, LED_PIN_GREEN); /* green solid = done */
                     gpio_high(LED_PORT_RED,   LED_PIN_RED);
                 }
+                usb_msc_set_suppressed(false); /* idle: allow the SD card to mount */
                 while (1) { usb_device_task(); }
                 break;
 
@@ -923,36 +1110,43 @@ int main(void)
                 apply_attackmode();
                 break;
 
-            case 0x01ea: while (!caps_lock_on)   { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_CAPS_ON    */
-            case 0x02ea: while ( caps_lock_on)   { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_CAPS_OFF   */
+            case 0x01ea: while (!caps_lock_on)   { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_CAPS_ON    */
+            case 0x02ea: while ( caps_lock_on)   { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_CAPS_OFF   */
             case 0x03ea: {
                 uint16_t s = caps_lock_on;
-                while (caps_lock_on == s) { usb_device_task(); blink_green_tick(); }
+                while (caps_lock_on == s) { usb_pump_with_keepalive(); blink_green_tick(); }
                 break; /* WAIT_FOR_CAPS_CHANGE */
             }
-            case 0x04ea: while (!num_lock_on)    { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_NUM_ON     */
-            case 0x05ea: while ( num_lock_on)    { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_NUM_OFF    */
+            case 0x04ea: while (!num_lock_on)    { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_NUM_ON     */
+            case 0x05ea: while ( num_lock_on)    { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_NUM_OFF    */
             case 0x06ea: {
                 uint16_t s = num_lock_on;
-                while (num_lock_on == s) { usb_device_task(); blink_green_tick(); }
+                while (num_lock_on == s) { usb_pump_with_keepalive(); blink_green_tick(); }
                 break; /* WAIT_FOR_NUM_CHANGE */
             }
-            case 0x07ea: while (!scroll_lock_on) { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_SCROLL_ON  */
-            case 0x08ea: while ( scroll_lock_on) { usb_device_task(); blink_green_tick(); } break; /* WAIT_FOR_SCROLL_OFF */
+            case 0x07ea: while (!scroll_lock_on) { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_SCROLL_ON  */
+            case 0x08ea: while ( scroll_lock_on) { usb_pump_with_keepalive(); blink_green_tick(); } break; /* WAIT_FOR_SCROLL_OFF */
             case 0x09ea: {
                 uint16_t s = scroll_lock_on;
-                while (scroll_lock_on == s) { usb_device_task(); blink_green_tick(); }
+                while (scroll_lock_on == s) { usb_pump_with_keepalive(); blink_green_tick(); }
                 break; /* WAIT_FOR_SCROLL_CHANGE */
             }
 
             case 0xeaea: /* WAIT_FOR_BUTTON_PRESS
                           * Just waits for the physical button — does NOT jump into
-                          * BUTTON_DEF.  That was a bug in the original firmware. */
+                          * BUTTON_DEF.  That was a bug in the original firmware.
+                          * MSC is RE-ENABLED for the whole wait so Windows can
+                          * finish mounting the SD card while we sit here; safe
+                          * thanks to the non-blocking usb_msc_task() rewrite.
+                          * HID stays warm via the keep-alive so the STRING after
+                          * the button press doesn't lose its leading chars. */
                 button_push_received = 0;
+                usb_msc_set_suppressed(false);
                 while (gpio_read(BTN_PORT, BTN_PIN)) {
-                    usb_device_task();
+                    usb_pump_with_keepalive();
                     blink_green_tick();
                 }
+                usb_msc_set_suppressed(true);
                 button_push_received = 1;
                 delay_ms(20); /* debounce: wait for release */
                 while (!gpio_read(BTN_PORT, BTN_PIN)) { usb_device_task(); }
@@ -980,6 +1174,7 @@ int main(void)
         gpio_high(LED_PORT_RED,   LED_PIN_RED);
     }
 
+    usb_msc_set_suppressed(false); /* idle: allow the SD card to mount/stay mounted */
     while (1) { usb_device_task(); }
     return 0;
 }
