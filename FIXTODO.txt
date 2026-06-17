@@ -1,0 +1,248 @@
+This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random Chars. !"="§=$§%($)(%"§)!
+
+
+
+This is a test messaage. ake sure this message types out correctly and if not, fix the code! We will now type random Chars. !"="§=$§%($)(%"§)!
+
+
+
+This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random Chars. !"="§=$§%($)(%"§)!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+it still has like 3 seconds delay before it begins to type. also it has issues. so let me get this straight. we have startup delay but it still makes mistakes. wtf is wrong with these codes???
+
+
+
+
+
+
+
+
+i even tried with this script:
+
+
+ATTACKMODE HID STORAGE
+REM Initialize the infinite loop
+DELAY 1000
+WHILE TRUE
+    STRING This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random chars. !"="§=$§%($)(%"§)!
+    ENTER
+    
+    REM Halt and wait for the physical button press
+    WAIT_FOR_BUTTON_PRESS
+    
+    STRING The button was pressed!
+    ENTER
+    REM Optional: Add a small delay so it doesn't immediately loop back too aggressively
+    DELAY 1000
+END_WHILE
+
+
+
+Output:
+This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random Chars. !"="§=$§%($)(%"§)!
+This is a test messaage. make sure this message types out correctly and if not, fix the code! We will now type random Chars. !"="§=$§%($)(%"§)!
+
+
+
+
+
+I have checked the original rubberducky and this is ist delay:
+[shift] (First key pressed)
+ -> T (2.00 ms delay)
+ -> h (8.00 ms delay)
+ -> i (6.00 ms delay)
+ -> s (6.00 ms delay)
+ -> [space] (6.00 ms delay)
+ -> i (6.00 ms delay)
+ -> s (6.51 ms delay)
+ -> [space] (5.00 ms delay)
+ -> a (7.00 ms delay)
+ -> [space] (5.00 ms delay)
+ -> t (6.00 ms delay)
+ -> e (6.00 ms delay)
+ -> s (6.00 ms delay)
+ -> t (6.00 ms delay)
+ -> [space] (6.00 ms delay)
+ -> m (6.00 ms delay)
+ -> e (6.00 ms delay)
+ -> s (6.00 ms delay)
+ -> s (6.00 ms delay)
+ -> a (6.00 ms delay)
+ -> a (6.00 ms delay)
+ -> g (6.01 ms delay)
+ -> e (6.00 ms delay)
+ -> . (6.51 ms delay)
+ -> [space] (6.01 ms delay)
+ -> [shift] (6.00 ms delay)
+ -> M (1.99 ms delay)
+ -> a (8.00 ms delay)
+ -> k (6.01 ms delay)
+ -> e (6.00 ms delay)
+ -> [space] (6.00 ms delay)
+ -> s (6.00 ms delay)
+ -> u (6.00 ms delay)
+ -> r (5.99 ms delay)
+ -> e (6.01 ms delay)
+ -> [space] (6.00 ms delay)
+ -> t (6.00 ms delay)
+ -> h (6.00 ms delay)
+ -> i (6.01 ms delay)
+ -> s (6.00 ms delay)
+ -> [space] (5.52 ms delay)
+ -> m (5.99 ms delay)
+ -> e (6.44 ms delay)
+ -> s (6.00 ms delay)
+ -> s (6.01 ms delay)
+ -> a (6.00 ms delay)
+ -> g (6.00 ms delay)
+ -> e (6.00 ms delay)
+ -> [space] (6.00 ms delay)
+ -> t (5.93 ms delay)
+ -> y (6.09 ms delay)
+ -> p (6.01 ms delay)
+ -> e (5.99 ms delay)
+ -> s (5.34 ms delay)
+ -> [space] (6.03 ms delay)
+ -> o (6.00 ms delay)
+ -> u (6.59 ms delay)
+ -> t (5.73 ms delay)
+ -> [space] (5.67 ms delay)
+ -> c (6.00 ms delay)
+ -> o (6.00 ms delay)
+ -> r (6.00 ms delay)
+ -> r (5.96 ms delay)
+ -> e (6.00 ms delay)
+ -> c (5.99 ms delay)
+ -> t (6.19 ms delay)
+ -> l (5.99 ms delay)
+ -> y (6.99 ms delay)
+ -> [space] (5.10 ms delay)
+ -> a (6.38 ms delay)
+ -> n (6.00 ms delay)
+ -> d (6.00 ms delay)
+ -> [space] (5.60 ms delay)
+ -> i (5.96 ms delay)
+ -> f (6.07 ms delay)
+ -> [space] (5.99 ms delay)
+ -> n (6.22 ms delay)
+ -> o (6.10 ms delay)
+ -> t (6.00 ms delay)
+ -> , (5.97 ms delay)
+ -> [space] (6.05 ms delay)
+ -> f (6.00 ms delay)
+ -> i (6.03 ms delay)
+ -> x (5.76 ms delay)
+ -> [space] (6.00 ms delay)
+ -> t (6.24 ms delay)
+ -> h (5.92 ms delay)
+ -> e (6.10 ms delay)
+ -> [space] (6.01 ms delay)
+ -> c (6.00 ms delay)
+ -> o (5.98 ms delay)
+ -> d (5.71 ms delay)
+ -> e (6.02 ms delay)
+ -> [shift] (6.00 ms delay)
+ -> ! (1.99 ms delay)
+ -> [space] (8.37 ms delay)
+ -> [shift] (5.25 ms delay)
+ -> W (2.02 ms delay)
+ -> e (8.99 ms delay)
+ -> [space] (5.01 ms delay)
+ -> w (6.87 ms delay)
+ -> i (5.05 ms delay)
+ -> l (6.75 ms delay)
+ -> l (6.00 ms delay)
+ -> [space] (6.00 ms delay)
+ -> n (6.01 ms delay)
+ -> o (5.54 ms delay)
+ -> w (5.43 ms delay)
+ -> [space] (6.51 ms delay)
+ -> t (6.01 ms delay)
+ -> y (6.30 ms delay)
+ -> p (5.75 ms delay)
+ -> e (6.45 ms delay)
+ -> [space] (6.00 ms delay)
+ -> r (6.00 ms delay)
+ -> a (5.99 ms delay)
+ -> n (5.99 ms delay)
+ -> d (6.00 ms delay)
+ -> o (6.01 ms delay)
+ -> m (6.00 ms delay)
+ -> [space] (5.99 ms delay)
+ -> c (6.00 ms delay)
+ -> h (6.07 ms delay)
+ -> a (6.00 ms delay)
+ -> r (5.54 ms delay)
+ -> s (6.39 ms delay)
+ -> . (6.00 ms delay)
+ -> [space] (6.14 ms delay)
+ -> [shift] (6.00 ms delay)
+ -> ! (1.99 ms delay)
+ -> [shift] (7.87 ms delay)
+ -> " (2.04 ms delay)
+ -> [shift] (8.02 ms delay)
+ -> = (1.99 ms delay)
+ -> [shift] (7.99 ms delay)
+ -> " (2.01 ms delay)
+ -> [shift] (8.01 ms delay)
+ -> § (2.00 ms delay)
+ -> [shift] (8.00 ms delay)
+ -> = (2.01 ms delay)
+ -> [shift] (7.93 ms delay)
+ -> $ (2.07 ms delay)
+ -> [shift] (8.01 ms delay)
+ -> § (2.00 ms delay)
+ -> [shift] (7.61 ms delay)
+ -> % (2.42 ms delay)
+ -> [shift] (7.97 ms delay)
+ -> ( (1.99 ms delay)
+ -> [shift] (8.01 ms delay)
+ -> $ (1.99 ms delay)
+ -> [shift] (7.41 ms delay)
+ -> ) (2.01 ms delay)
+ -> [shift] (8.79 ms delay)
+ -> ( (1.99 ms delay)
+ -> [shift] (8.01 ms delay)
+ -> % (2.00 ms delay)
+ -> [shift] (7.00 ms delay)
+ -> " (3.00 ms delay)
+ -> [shift] (7.00 ms delay)
+ -> § (3.00 ms delay)
+ -> [shift] (7.00 ms delay)
+ -> ) (3.01 ms delay)
+ -> [shift] (7.00 ms delay)
+ -> ! (1.99 ms delay)
+ -> [enter] (8.53 ms delay)
+ -> [ctrl_l] (8217.39 ms delay)
+
+
+
+ist Output(3 replugs):
+This  a test mege. maksure this message tes out crrectly a if not fix the ode!We will now type random Chars. !"=2§=$§%($)(%"§)!
+
+This is a est messaage. make ure this message types ot correctly and if nt, fix th ce! We will now type random Chars. 12="§=$§%($)(%"§)!
+
+This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random chars. !"="§=$§%($)(%"§)!
+The button was pressed!
+This is a test messaage. Make sure this message types out correctly and if not, fix the code! We will now type random chars. !"="§=$§%($)(%"§)!
+
+at the top it was DELAY 1000. 
+
+as you can see ours is slightly better but our char delay is too high, we Need 7ms and we Need to make sure we make no mistakes and have no delay on Startup!
+
+
+

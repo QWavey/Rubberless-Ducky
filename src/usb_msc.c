@@ -356,6 +356,11 @@ static void tick_idle(void) {
         return;
     }
 
+    /* Any valid command from the host counts as storage activity, so the
+     * firmware's "wait for the mount to settle" loop in main.c can tell when
+     * Windows has stopped hammering the SD card. */
+    storage_activity_mark();
+
     bot.dCBWTag = (uint32_t)cbw[4]
                 | ((uint32_t)cbw[5] << 8)
                 | ((uint32_t)cbw[6] << 16)

@@ -84,9 +84,16 @@ void usb_hid_register_out_callback(usb_hid_out_callback_t callback);
 bool usb_hid_send_report(const uint8_t *data, uint8_t length);
 
 /**
- * @brief Check if the IN endpoint is ready to accept a new report.
+ * @brief Check if the IN endpoint is ready to accept a new report (a bank is free).
  */
 bool usb_hid_in_endpoint_ready(void);
+
+/**
+ * @brief True once the host has actually READ every queued report (NBUSYBK==0).
+ *        Use this (not just _ready) to confirm delivery before sending the next
+ *        report, so a press and its release can't be coalesced by the host.
+ */
+bool usb_hid_in_all_sent(void);
 
 /**
  * @brief Temporarily suppress mass-storage (MSC) servicing.
@@ -98,6 +105,15 @@ bool usb_hid_in_endpoint_ready(void);
  * again once the keystroke is done so the SD card can finish mounting.
  */
 void usb_msc_set_suppressed(bool suppressed);
+
+/**
+ * @brief Rate-limit mass-storage servicing so HID keeps priority.
+ * @param budget  <0 = unlimited, 0 = none, >0 = at most this many usb_msc_task()
+ *                steps before it stops (decremented per step).  Set a small
+ *                positive value between keystrokes so storage trickles instead
+ *                of stalling the loop with a burst of SD reads.
+ */
+void usb_msc_set_budget(int budget);
 
 #endif /* USB_HID_H_ */
 

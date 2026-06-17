@@ -102,9 +102,14 @@ static usb_event_callback_t   s_callbacks[5]      = { NULL };
 static usb_hid_out_callback_t s_out_callback      = NULL;
 static uint8_t                s_ctrl_buf[64];
 
-/* When set, usb_device_task() skips usb_msc_task() so a storage transfer can
- * never block the loop while a HID keystroke is being delivered. */
-static volatile bool          s_msc_suppressed    = false;
+/* Storage "budget" governing how much mass-storage work usb_device_task() is
+ * allowed to do, so the keyboard always keeps priority:
+ *    < 0  → unlimited (idle windows: let the SD mount as fast as it likes)
+ *    == 0 → none      (mid-keystroke: storage must not block a press/release)
+ *    > 0  → at most this many usb_msc_task() steps, decremented each step
+ *           (during typing: a trickle of one tiny step between keystrokes so
+ *            the loop never stalls on a burst of SD sector reads). */
+static volatile int           s_msc_budget        = -1;
 
 /* =========================================================================
  * USBB Peripheral access helpers
@@ -246,9 +251,28 @@ bool usb_hid_in_endpoint_ready(void)
     return !!(AVR32_USBB.uesta1 & AVR32_USBB_UESTA1_TXINI_MASK);
 }
 
+bool usb_hid_in_all_sent(void)
+{
+    /* NBUSYBK = number of banks still holding data the host hasn't read yet.
+     * Zero means every queued report has actually been collected by the host.
+     * Unlike TXINI (which only says "a bank is free" and can be true while a
+     * just-queued report still sits unread in the OTHER bank of a double-
+     * buffered endpoint), this is a true "delivered" signal — so we never send
+     * a release until the host has really taken the press, which stops Windows
+     * from coalescing the pair and dropping the keystroke. */
+    return ((AVR32_USBB.uesta1 & AVR32_USBB_UESTA1_NBUSYBK_MASK)
+            >> AVR32_USBB_UESTA1_NBUSYBK_OFFSET) == 0;
+}
+
 void usb_msc_set_suppressed(bool suppressed)
 {
-    s_msc_suppressed = suppressed;
+    /* Back-compat: suppress = no storage; un-suppress = unlimited. */
+    s_msc_budget = suppressed ? 0 : -1;
+}
+
+void usb_msc_set_budget(int budget)
+{
+    s_msc_budget = budget;
 }
 
 bool usb_hid_send_report(const uint8_t *data, uint8_t length)
@@ -328,12 +352,14 @@ void usb_device_task(void)
     
     extern uint8_t current_attackmode;
     if (s_state == DEVICE_STATE_CONFIGURED && (current_attackmode == 2 || current_attackmode == 3)
-        && !s_msc_suppressed) {
-        /* Storage is only serviced when no keystroke is in flight.  This keeps
-         * a multi-sector SD read from stalling the loop mid-keystroke, which
-         * was causing dropped key-releases (stuck/repeated keys) and uneven
-         * typing speed in composite HID+STORAGE mode. */
+        && s_msc_budget != 0) {
+        /* Storage is rate-limited by the budget so the keyboard always keeps
+         * priority.  During typing the budget is a trickle (one step between
+         * keystrokes), so a burst of SD sector reads can never stall the loop
+         * mid-string (the "half-second freeze" + dropped characters).  During
+         * idle windows the budget is unlimited so the mount finishes quickly. */
         usb_msc_task();
+        if (s_msc_budget > 0) s_msc_budget--;
     }
 }
 
@@ -401,7 +427,7 @@ static void configure_hid_endpoints(void)
         AVR32_USBB.uecfg1 = (3 << AVR32_USBB_UECFG1_EPTYPE_OFFSET)  /* Interrupt */
                            | (1 << AVR32_USBB_UECFG1_EPDIR_OFFSET)   /* IN */
                            | (3 << AVR32_USBB_UECFG1_EPSIZE_OFFSET)  /* 64 bytes */
-                           | (0 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* Single bank */
+                           | (1 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* DOUBLE bank */
                            | AVR32_USBB_UECFG1_ALLOC_MASK;
         
 
@@ -694,8 +720,15 @@ static void ep0_handle_setup(void)
         }
 
         if (req == HID_SET_REPORT) {
-            /* Wait for OUT data */
-            while (!(AVR32_USBB.uesta0 & AVR32_USBB_UESTA0_RXOUTI_MASK));
+            /* Wait for OUT data — BOUNDED.  The previous unbounded spin could
+             * lock the whole device forever if the host's OUT stage never
+             * arrived (e.g. an aborted control transfer), which presented as
+             * "after some host interaction the device stops responding". */
+            uint32_t timeout = USB_POLL_TIMEOUT;
+            while (!(AVR32_USBB.uesta0 & AVR32_USBB_UESTA0_RXOUTI_MASK)) {
+                if (AVR32_USBB.uesta0 & AVR32_USBB_UESTA0_RXSTPI_MASK) return;
+                if (--timeout == 0) { ep0_stall(); return; }
+            }
             uint8_t led_state = USBB_EP_FIFO(EP_CONTROL)[0];
             AVR32_USBB.uesta0clr = AVR32_USBB_UESTA0CLR_RXOUTIC_MASK;
             if (s_out_callback) {
