@@ -35,6 +35,17 @@
 #include "pff.h"
 #include "diskio.h"
 
+/* ---------- Firmware build identity -------------------------------------
+ * Stamped with the compiler's build date/time on EVERY build, so you can tell
+ * which firmware is actually on the chip after many flash cycles.  The string
+ * is force-kept in the image (attribute "used" survives --gc-sections); read
+ * it back from the built image with:
+ *     avr32-strings build/firmware.elf | grep FWVER
+ * Bump FW_TAG for a human-readable milestone name. */
+#define FW_TAG      "rd5"
+#define FW_VERSION  FW_TAG " " __DATE__ " " __TIME__
+__attribute__((used)) static const char g_fw_version[] = "FWVER " FW_VERSION;
+
 /* ---------- freestanding libc ------------------------------------------- */
 void *memcpy(void *dest, const void *src, size_t n) {
     char *d = dest; const char *s = src;
@@ -89,8 +100,20 @@ typedef struct __attribute__((packed)) {
 static volatile bool g_usb_ready    = false;
 static bool          g_sd_card_ok   = false;
 static bool          g_payload_run  = false;
+
+/* OS-detection primitives — the firmware side of Korben's OS_DETECTION payload
+ * extension.  The extension probes the host (toggling lock keys, watching config
+ * requests) and reads these signals back to decide $_OS; the decision logic
+ * lives in the payload.  The firmware's job is only to expose accurate signals,
+ * NOT to hardcode a result (which is why $_OS used to always read WINDOWS). */
+static uint16_t          current_os            = 1; /* $_OS (WINDOWS=1 default); real read/write, set by the extension */
+static volatile uint16_t received_led_reply    = 0; /* $_RECEIVED_HOST_LOCK_LED_REPLY: host sent a LED OUT report since the last SAVE_HOST_LOCK_STATE */
+static volatile uint16_t host_config_req_count = 0; /* $_HOST_CONFIGURATION_REQUEST_COUNT: config-descriptor GETs during the current enumeration */
+
 void usb_device_enumerated_cb(void)       { g_usb_ready = true; }
-void usb_device_config_requested_cb(void) {}
+/* Windows requests the configuration descriptor more times than Linux/macOS on
+ * enumerate — the OS_DETECTION extension reads this count to tell them apart. */
+void usb_device_config_requested_cb(void) { host_config_req_count++; }
 
 /* Timestamp (CPU cycle count) of the most recent mass-storage activity.
  * usb_msc.c calls storage_activity_mark() on every command and every block
@@ -115,7 +138,7 @@ static volatile uint16_t button_pending = 0;
 
 uint16_t        current_vid        = 0x05AC;
 uint16_t        current_pid        = 0x021E;
-uint8_t         current_attackmode = 1;   /* always HID-only (see force below) */
+uint8_t         current_attackmode = 1;   /* DEFAULT = HID; ATTACKMODE opcodes override (STORAGE/composite honoured) */
 static uint16_t saved_attackmode   = 1;
 static uint16_t saved_vid          = 0x05AC;
 static uint16_t saved_pid          = 0x021E;
@@ -132,10 +155,12 @@ static inline uint32_t cyc(void) { return __builtin_mfsr(AVR32_COUNT); }
  * EP0 control transfers (SET_CONFIGURATION, GET_DESCRIPTOR, etc.) still
  * complete during the wait. */
 static void delay_ms(uint32_t ms) {
-    while (ms--) {
-        uint32_t t0 = cyc();
-        while ((cyc() - t0) < CYCLES_PER_MS) usb_device_task();
-    }
+    /* Real-time span, not `ms` separate ticks — usb_device_task() can block a
+     * few ms per SD sector, which would otherwise stretch each tick (see
+     * settle()/payload_delay()). */
+    uint32_t start = cyc();
+    uint32_t target = ms * CYCLES_PER_MS;
+    while ((cyc() - start) < target) usb_device_task();
 }
 
 /* ---------- LED helpers ------------------------------------------------ */
@@ -171,6 +196,10 @@ void usb_hid_report_out_cb(uint8_t *data, uint8_t length) {
     num_lock_on    = !!(leds & 0x01);
     caps_lock_on   = !!(leds & 0x02);
     scroll_lock_on = !!(leds & 0x04);
+    /* The host answered with a lock-LED state -> record it for OS detection.
+     * The extension clears this (via SAVE_HOST_LOCK_STATE) before it toggles a
+     * lock key, then checks whether a reply arrived within its timeout. */
+    received_led_reply = 1;
 }
 
 /* ======================================================================
@@ -199,17 +228,23 @@ static bool g_allow_bare_modifier = false;
 static void hid_send_one(const keyboard_report_t *src) {
     keyboard_report_t r = *src;
 
-    /* ---- Safety choke-point ---------------------------------------- */
-    /* Never let the Windows (GUI) modifier go out as part of auto-typed
-     * text — a Ducky STRING never needs it, and a stray GUI bit is what
-     * opens Start / launches apps / lands on m365. */
-    if (!g_allow_bare_modifier)
-        r.modifier &= (uint8_t)~(MOD_LGUI | MOD_RGUI);
-
-    /* If after that the report is "modifier(s) held but no key", and we're
-     * not in an intentional KEY_DOWN hold, turn it into a pure release so a
-     * bare Alt/Ctrl/Shift/Win tap can never reach the host. */
-    if (!g_allow_bare_modifier && r.keys[0] == 0 && r.modifier != 0)
+    /* ---- Safety choke-point ----------------------------------------
+     * Collapse a BARE modifier report — one that carries modifier bits but NO
+     * keycode — to a clean release.  A bare modifier that reaches the host is
+     * the ONLY thing that can leak or stick a stray Ctrl/Alt/Shift/Win, which
+     * was the stuck-modifier flood behind the m365 symptom (also fixed at the
+     * root now that we force HID-only, so the MSC mount storm can't delay a
+     * release in the first place).
+     *
+     * A report that DOES carry a keycode is an intentional keystroke, possibly
+     * a modifier combo — the compiler emits `GUI r` as a single keystroke word
+     * (keycode r + modifier GUI, verified: 0x1508).  It MUST keep its modifier,
+     * INCLUDING the GUI/Windows bit, or every Win-key shortcut (GUI r, GUI e,
+     * GUI x, …) silently degrades to typing a plain letter.  send_key() sends
+     * every key as press → drain → release → drain, so such a combo is atomic
+     * and can never stick.  (The earlier code stripped GUI from ALL keystrokes,
+     * which is exactly why the user's `GUI r` / `GUI s` combos did nothing.) */
+    if (!g_allow_bare_modifier && r.keys[0] == 0)
         r.modifier = 0;
 
     uint32_t overall = cyc();
@@ -231,9 +266,20 @@ static void hid_send_one(const keyboard_report_t *src) {
         poll_button();
     }
 
-    /* ---- Phase 2: wait until the host has collected it (bank free again) -- */
+    /* ---- Phase 2: wait until the host has ACTUALLY COLLECTED the report ----
+     * EP1-IN is DOUBLE-banked (usb_descriptors/usb_hid.c: UECFG1 EPBK=1), so
+     * TXINI ("a bank is free") goes true the instant we queue — the OTHER bank
+     * is free while the report we just wrote still sits UNREAD in this one.
+     * Waiting on TXINI therefore returned immediately, we fired the release
+     * before the host took the press, and Windows coalesced the press+release
+     * into nothing — dropping whole characters AND stripping the Shift modifier
+     * off shifted keys (e.g. the German symbol row degrading to bare digits).
+     *
+     * NBUSYBK == 0 (usb_hid_in_all_sent) is the real "delivered" signal: it is
+     * zero only once the host has drained every queued bank.  Gate on that so
+     * each press and each release is individually collected before we move on. */
     uint32_t t0 = cyc();
-    while (!usb_hid_in_endpoint_ready()) {
+    while (!usb_hid_in_all_sent()) {
         if ((cyc() - t0) > CYCLES_PER_MS * TX_TIMEOUT_MS) return;
         usb_device_task();
         poll_button();
@@ -265,47 +311,13 @@ static void hid_scrub(int n) {
     for (int i = 0; i < n; i++) hid_release_all();
 }
 
-/* Warm up the host's HID polling before typing resumes after an idle/storage
- * window.
- *
- * Root cause of the "first few characters of each STRING drop" symptom: while
- * the SD-card mount runs in an idle window (DELAY / WAIT_FOR_BUTTON_PRESS),
- * Windows de-prioritises the keyboard IN endpoint.  When the next STRING
- * starts, the host is still ramping HID polling back up, so the opening
- * keystrokes land in a dead zone and are lost.  A blind 3-report scrub doesn't
- * fix it because it can't tell whether the host is actually polling yet.
- *
- * This routine sends release-all (zero) reports and measures how fast each one
- * drains.  A drain faster than ~one bInterval means the host is polling EP1 at
- * full rate.  We require several FAST drains in a row before returning, so by
- * the time real keystrokes start the host is fully warmed up and nothing drops.
- * Also doubles as a modifier scrub (all-zero).  Bounded so a non-polling host
- * can't hang us. */
-static void hid_warmup(void) {
-    keyboard_report_t z;
-    memset(&z, 0, sizeof(z));
-    int consecutive_fast = 0;
-    uint32_t overall = cyc();
-
-    while (consecutive_fast < 8) {
-        if ((cyc() - overall) > CYCLES_PER_MS * 1500u) return; /* failsafe */
-
-        while (!usb_hid_in_endpoint_ready()) {
-            usb_device_task();
-            if ((cyc() - overall) > CYCLES_PER_MS * 1500u) return;
-        }
-        usb_hid_send_report((uint8_t*)&z, sizeof(z));
-
-        uint32_t t0 = cyc();
-        while (!usb_hid_in_endpoint_ready()) {
-            usb_device_task();
-            if ((cyc() - overall) > CYCLES_PER_MS * 1500u) return;
-        }
-        /* Drain under ~4 ms → host is polling at the 1 ms full rate. */
-        if ((cyc() - t0) < CYCLES_PER_MS * 4u) consecutive_fast++;
-        else                                   consecutive_fast = 0;
-    }
-}
+/* (hid_warmup() was removed.  It probed how fast empty reports drained to decide
+ * the host was "ready" before typing — but it was called after every DELAY chunk
+ * and at boot, and when the host is busy bringing up the SD drive each call
+ * burned its multi-second failsafe AND suppressed storage.  That is what made
+ * typing start ~14 s late and the drive take minutes to enumerate.  First-pass
+ * reliability is now owned by the warm-up ramp in send_key() + the NBUSYBK send
+ * path + the one-time wait_for_host_polling() at boot, so the probe is gone.) */
 
 /* Inter-event settle (ms).  Even though hid_send_one waits for the host to
  * drain each report at the USB level, the host's *input stack* (the part that
@@ -313,24 +325,44 @@ static void hid_warmup(void) {
  * or it coalesces/reorders fast back-to-back press+release pairs — which shows
  * up as wrong characters and stray digits, not just dropped ones.  5 ms is the
  * smallest value that typed cleanly in testing; 0 ms garbled. */
-/* Per-key spacing between a press and its release.  This is what keeps the
- * host from coalescing the pair (which drops the key), so it can't go too low.
- * 4 ms is the steady-state value that types cleanly once the SD is mounted. */
-static uint16_t char_settle_ms = 4;
+/* ===================== TYPING TIMING KNOBS (tune here) =====================
+ * Per-key spacing between a press and its release (and the same gap after the
+ * release).  This is what keeps the host from coalescing the press/release pair
+ * (which drops the key), so it can't go too low.  TYPE_HOLD_MS is the fast
+ * steady-state hold that types cleanly.  The WARMUP_* values slow the opening
+ * of the FIRST pass (before the host's input stack is fully up) and then ramp
+ * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
+ * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
+ * still drops characters on the first pass; lower them for faster typing. */
+#define TYPE_HOLD_MS          4    /* steady-state per-key hold + gap            */
+#define WARMUP_SLOW_KEYS      64   /* first N keys: slowest                      */
+#define WARMUP_SLOW_EXTRA_MS  14   /* ...held TYPE_HOLD_MS + this  (~36 ms/char) */
+#define WARMUP_RAMP_KEYS      130  /* up to N keys: medium                       */
+#define WARMUP_RAMP_EXTRA_MS  6    /* ...held TYPE_HOLD_MS + this  (~20 ms/char) */
+/* ========================================================================== */
 
-/* Extra spacing while the SD mount is still busy: the host reads the keyboard
- * in bursts then, so press/release need to be further apart to be seen
- * separately.  Applied only until the mount goes quiet. */
-#define MOUNT_BUSY_EXTRA_MS 8u
+static uint16_t char_settle_ms = TYPE_HOLD_MS;
 
 /* Latches true once storage has been quiet for a spell == mount finished.
  * After that, typing runs at full speed with only a storage trickle. */
 static bool g_mount_done = false;
 
+/* Keystrokes typed since boot — drives the post-enumeration warm-up ramp in
+ * send_key() so the first STRING (typed before the host input stack is fully
+ * up) is paced slowly, then typing accelerates to steady-state speed. */
+static uint16_t g_keys_typed = 0;
+
+/* Wait `ms` of REAL time while pumping USB.  Measured against the cycle counter
+ * as one span, NOT as a loop of `ms` separate 1-ms ticks: usb_device_task() can
+ * block a few ms servicing an SD sector for the mass-storage drive, and the old
+ * per-tick loop let each of those stretch a "1 ms" tick into ~4 ms — so a delay
+ * ran 4-6x long once storage was live (the ~15 s startup).  A single span can
+ * only overshoot by one task call, not multiply. */
 static void settle(uint32_t ms) {
-    while (ms--) {
-        uint32_t t0 = cyc();
-        while ((cyc() - t0) < CYCLES_PER_MS) usb_device_task();
+    uint32_t start = cyc();
+    uint32_t target = ms * CYCLES_PER_MS;
+    while ((cyc() - start) < target) {
+        usb_device_task();
         poll_button();
     }
 }
@@ -344,16 +376,31 @@ static void settle(uint32_t ms) {
  * Hak5-style concurrency: the card mounts in the background WHILE the first
  * STRING types, instead of us stalling for the mount up front. */
 static inline void send_key(uint8_t modifier, uint8_t keycode) {
-    /* Latch "mount finished" once storage has gone quiet for a moment. */
+    /* Latch "mount finished" (kept only for the storage-budget calls below;
+     * with the forced HID-only profile there is no host drive, so this has no
+     * effect on typing). */
     if (!g_mount_done && (cyc() - g_last_msc_cyc) > CYCLES_PER_MS * 300u)
         g_mount_done = true;
 
-    /* Spacing: tight once mounted, wider while the mount is busy so the host
-     * (reading in bursts then) sees press and release separately.  Storage is
-     * off across the press→release pair so an SD read can't split a key; in
-     * the inter-key gap it runs full-speed while mounting, then trickles. */
-    uint32_t hold = g_mount_done ? char_settle_ms
-                                 : (uint32_t)char_settle_ms + MOUNT_BUSY_EXTRA_MS;
+    /* Post-enumeration warm-up ramp.
+     *
+     * Steady-state typing is reliable at char_settle_ms — every pass after the
+     * first types perfectly.  But right after the device enumerates, the host's
+     * INPUT stack (the layer ABOVE USB polling that turns HID reports into
+     * characters in the focused app) lags for a beat.  hid_warmup() confirms
+     * USB-level polling but cannot see that higher layer, so the very first
+     * STRING otherwise outruns it and loses characters AND the Shift modifier
+     * (the German symbol row degrading to bare digits).
+     *
+     * Fix: hold each of the first keystrokes markedly longer, then ramp down to
+     * full speed.  Only the opening of the FIRST pass is slowed; every later
+     * pass runs at the fast steady-state rate.  g_keys_typed counts keystrokes
+     * since boot, so the ramp spans roughly the first STRING and is done. */
+    uint32_t hold;
+    if      (g_keys_typed < WARMUP_SLOW_KEYS) hold = (uint32_t)char_settle_ms + WARMUP_SLOW_EXTRA_MS;
+    else if (g_keys_typed < WARMUP_RAMP_KEYS) hold = (uint32_t)char_settle_ms + WARMUP_RAMP_EXTRA_MS;
+    else                                      hold = (uint32_t)char_settle_ms;
+    if (g_keys_typed != 0xFFFF) g_keys_typed++;
 
     usb_msc_set_budget(0);
     hid_send_report(modifier, keycode);
@@ -388,17 +435,24 @@ static void usb_keepalive(void) {
  * Ctrl+C/V/S the detector caught).  Scrubbing with MSC already suppressed
  * guarantees the modifier state is clean before typing resumes. */
 static void payload_delay(uint32_t ms) {
-    /* Idle window: storage gets UNLIMITED budget so the SD mount finishes as
-     * fast as possible while we're not typing. */
+    /* Idle window: storage gets UNLIMITED budget so the SD mount / host reads
+     * finish as fast as possible while we're not typing. */
     usb_msc_set_budget(-1);
-    while (ms--) {
-        uint32_t t0 = cyc();
-        while ((cyc() - t0) < CYCLES_PER_MS) usb_keepalive();
+    /* REAL-time span (see settle()): usb_keepalive() pumps usb_device_task(),
+     * which blocks a few ms per SD sector while the host mounts the drive.  The
+     * old `while (ms--)` per-tick loop let each of those stretch a "1 ms" tick
+     * into ~4-6 ms, so `DELAY 2500` actually took ~10-15 s once storage was live
+     * — THAT is the "15 s before it types" bug.  Measure one real span instead. */
+    uint32_t start = cyc();
+    uint32_t target = ms * CYCLES_PER_MS;
+    while ((cyc() - start) < target) {
+        usb_keepalive();
+        blink_tick();            /* a DELAY is the payload running -> blink green (Processing) */
         poll_button();
     }
-
-    usb_msc_set_budget(0);   /* quiet storage; trickle resumes via send_key */
-    hid_warmup();
+    /* (No hid_warmup() here anymore — the warm-up ramp in send_key() + the
+     * NBUSYBK send path own first-pass reliability; leaving the budget UNLIMITED
+     * also lets the mount keep progressing across a chain of delay chunks.) */
 }
 
 /* Wait until the host has actually started polling EP1 IN.  Send one
@@ -491,8 +545,23 @@ static void type_number(int n) {
 
 /* ======================================================================
  * Payload storage and word access
- * ====================================================================== */
-static uint8_t payload_ram[8192];
+ *
+ * The whole payload is read into RAM at boot, BEFORE USB is enabled — it has
+ * to be, because on this board the SD card's SPI MISO line is physically
+ * shared with USB D- (PA25): once usb_device_init() runs, the card can no
+ * longer be read (sd_read_sector() returns zeros).  So "stream from SD on
+ * demand" is not possible here; the payload's hard limit is however much RAM
+ * we can give this buffer.
+ *
+ * Because the host profile is forced HID-only (no mass-storage interface, see
+ * parse_attackmode), the 16 KB MSC sector-cache in mmc.c is dead weight, so
+ * MC_MAX was cut there to hand that SRAM to this buffer instead.  That raises
+ * the payload ceiling from 8 KB to 20 KB (~10240 keystroke/opcode words) at
+ * ZERO net SRAM cost, with no change for payloads that already fit.  Payloads
+ * larger than this are still capped silently (no error surfaced), just at a
+ * much higher limit that ordinary scripts never approach. */
+#define PAYLOAD_MAX_BYTES 20480
+static uint8_t payload_ram[PAYLOAD_MAX_BYTES];
 static uint16_t g_word_count = 0;   /* number of valid words in payload_ram */
 
 /* Bounds-safe word fetch.  Anything at or past the end of the loaded payload
@@ -527,7 +596,7 @@ static uint16_t read_var(uint16_t a) {
         case 0x9542: return saved_scroll_on;
         case 0x9B42: return current_vid;
         case 0x9C42: return current_pid;
-        case 0x9D42: return 1;             /* OS = WINDOWS */
+        case 0x9D42: return current_os;    /* $_OS — set by the OS_DETECTION extension (was hardcoded WINDOWS) */
         case 0xA042: return current_attackmode;
         case 0xf042: return rand_min;
         case 0xf142: return rand_max;
@@ -558,6 +627,7 @@ static void write_var(uint16_t a, uint16_t v) {
         case 0x9542: saved_scroll_on      = v; break;
         case 0x9B42: current_vid          = v; break;
         case 0x9C42: current_pid          = v; break;
+        case 0x9D42: current_os           = v; break;   /* $_OS — the extension writes its prediction here */
         case 0xA042: current_attackmode   = (uint8_t)v; break;
         case 0xf042: rand_min             = v; break;
         case 0xf142: rand_max             = v; break;
@@ -605,6 +675,11 @@ static uint8_t  last_mode = 0xFF;
 
 static void apply_attackmode(void) {
     if (current_attackmode == last_mode && current_vid == last_vid && current_pid == last_pid) return;
+
+    /* Fresh (re-)enumeration begins here: zero the config-request counter so the
+     * OS_DETECTION extension counts only THIS enumeration's requests when it
+     * reads $_HOST_CONFIGURATION_REQUEST_COUNT after an ATTACKMODE. */
+    host_config_req_count = 0;
 
     g_usb_ready = false;
     usb_device_disable();
@@ -660,11 +735,30 @@ static void apply_attackmode(void) {
 static void parse_attackmode(uint16_t *pcp, uint16_t wc) {
     uint16_t pc = *pcp;
     uint16_t w  = get_word(pc);
-    if      (w == 0xf0f0) current_attackmode = 0;
-    else if (w == 0xf1f1) current_attackmode = 1;
-    else if (w == 0xf2f2) current_attackmode = 2;
-    else if (w == 0xf3f3) current_attackmode = 3;
+    if      (w == 0xf0f0) current_attackmode = 0;   /* OFF               */
+    else if (w == 0xf1f1) current_attackmode = 1;   /* HID               */
+    else if (w == 0xf2f2) current_attackmode = 2;   /* STORAGE           */
+    else if (w == 0xf3f3) current_attackmode = 3;   /* HID + STORAGE     */
     else                  return;
+    /* ATTACKMODE is honoured as written: STORAGE and HID+STORAGE really
+     * enumerate a mass-storage interface, so `ATTACKMODE HID STORAGE
+     * PID_021E VID_05AC MAN_Apple` shows up as a composite keyboard + USB
+     * stick with the spoofed identity.  HID stays only the DEFAULT (the
+     * initial current_attackmode = 1 when no ATTACKMODE opcode is present) —
+     * it is never permanently forced.
+     *
+     * (An earlier build collapsed STORAGE/composite to HID because the code
+     * comments blamed composite mode for a browser popping open on
+     * m365.cloud.microsoft.  That was a misdiagnosis: the real cause was the
+     * double-banked EP1 send path declaring a report "delivered" on TXINI
+     * instead of NBUSYBK, which dropped keystrokes/modifiers — now fixed in
+     * hid_send_one().  So the storage clamp was removed.)
+     *
+     * Hardware note: after usb_device_init() the SD's SPI MISO is dead (it
+     * shares PA25 with USB D-), so in STORAGE mode the host can only read the
+     * sectors pre-cached before USB came up (mmc.c mc_precache) — the drive
+     * appears and is identifiable, but throughput/coverage is limited.  That
+     * is a board constraint, not this decode. */
     pc++;
     while (pc < wc && get_word(pc) != w) {
         uint16_t p = get_word(pc);
@@ -712,11 +806,63 @@ static void parse_attackmode(uint16_t *pcp, uint16_t wc) {
 
 static void start_usb_and_wait(void) {
     usb_device_init();
-    sd_mark_spi_dead();
+    /* NOTE: sd_mark_spi_dead() was removed here.  It forced the SD offline
+     * after USB init on the false premise that "PA25 = USB D-, so MISO dies" —
+     * but on the AT32UC3B the USB uses the dedicated OTG transceiver pads
+     * (OTGPADE), not GPIO PA25, and USB here is polled (interrupts off), so the
+     * bit-banged SD SPI keeps working.  Leaving the SD live lets the already-
+     * complete SCSI MSC (usb_msc.c) serve a REAL read/write drive, so an
+     * `ATTACKMODE HID STORAGE` device is a genuinely browsable USB stick.  The
+     * SD paths are timeout-bounded, so if a given board really can't reach the
+     * card post-USB, reads fail fast instead of hanging. */
     usb_device_register_callback(USB_EVENT_ENUMERATED,       usb_device_enumerated_cb);
     usb_device_register_callback(USB_EVENT_CONFIG_REQUESTED, usb_device_config_requested_cb);
     usb_hid_register_out_callback(usb_hid_report_out_cb);
     apply_attackmode();
+}
+
+/* ======================================================================
+ * EXFIL — DuckyScript `EXFIL $VAR`
+ *
+ * Appends the binary value of a variable to LOOT.BIN on the SD card (DuckyScript
+ * 3.0 semantics: local on-device loot storage, no network/MSC needed).  Each
+ * variable is a uint16, written little-endian.
+ *
+ * Petit-FatFs pf_write() cannot grow a file and snaps writes to 512-byte sector
+ * boundaries, so we buffer a full sector in RAM and write it out whole.  Writes
+ * are truncated to the file size, so everything lands INSIDE a pre-existing
+ * LOOT.BIN and can never touch any other data on the card.
+ *
+ * REQUIREMENT: create an empty LOOT.BIN in the SD root, pre-sized to at least
+ * the loot you expect (e.g. a few KB of zeros).  Missing/too-small file -> the
+ * write is simply skipped (bounded, never hangs).
+ * ====================================================================== */
+static uint8_t  exfil_buf[512];
+static uint16_t exfil_buf_len = 0;   /* bytes buffered for the current sector   */
+static uint32_t exfil_offset  = 0;   /* sector-aligned byte offset into LOOT.BIN */
+static bool     exfil_opened  = false;
+
+/* Write the buffered bytes (padding a partial sector with zeros) to LOOT.BIN. */
+static void exfil_flush(void) {
+    if (exfil_buf_len == 0) return;
+    if (!exfil_opened) {
+        if (pf_open("LOOT.BIN") != FR_OK) { exfil_buf_len = 0; return; }
+        exfil_opened = true;
+    }
+    while (exfil_buf_len < 512) exfil_buf[exfil_buf_len++] = 0;  /* pad to a full sector */
+    UINT bw = 0;
+    if (pf_lseek(exfil_offset) == FR_OK && pf_write(exfil_buf, 512, &bw) == FR_OK)
+        pf_write(0, 0, &bw);            /* finalize the sector */
+    exfil_offset  += 512;
+    exfil_buf_len  = 0;
+}
+
+/* Append one variable's 16-bit value (little-endian) to the loot buffer. */
+static void exfil_var(uint16_t value) {
+    exfil_buf[exfil_buf_len++] = (uint8_t)(value & 0xFF);
+    if (exfil_buf_len == 512) exfil_flush();
+    exfil_buf[exfil_buf_len++] = (uint8_t)(value >> 8);
+    if (exfil_buf_len == 512) exfil_flush();
 }
 
 /* ======================================================================
@@ -725,6 +871,13 @@ static void start_usb_and_wait(void) {
 int main(void)
 {
     Disable_global_interrupt();
+
+    /* Anchor the build-version string so --gc-sections keeps it in the image
+     * (and a convenient spot to read it in a debugger).  The volatile write
+     * cannot be optimised away, so g_fw_version is always retained. */
+    static volatile const char *fw_ver_anchor;
+    fw_ver_anchor = g_fw_version;
+    (void)fw_ver_anchor;
 
     /* --- Disable watchdog --- */
     volatile uint32_t *wdt = (volatile uint32_t *)(&AVR32_WDT.ctrl);
@@ -784,10 +937,8 @@ int main(void)
     uint16_t word_count = (uint16_t)(br / 2);
     g_word_count = word_count;
 
-    /* Pre-scan for BUTTON_DEF offset and the initial variable block. */
-    for (uint16_t i = 0; i < word_count; i++)
-        if (get_word(i) == 0xeaee) button_def_pc = i + 2;
-
+    /* Parse the initial variable block (if present) FIRST, so we know where the
+     * executable code begins. */
     uint16_t pc = 0;
     if (word_count > 0 && get_word(0) == 0xe8e8) {
         uint16_t vi = 1; pc = 1;
@@ -796,6 +947,15 @@ int main(void)
             pc++;
         }
         if (pc < word_count) pc++;
+    }
+
+    /* Pre-scan the CODE region (starting past the variable block) for the FIRST
+     * BUTTON_DEF opcode.  Scanning from index 0 was a bug: a variable value that
+     * happened to equal 0xeaee would be mistaken for a BUTTON_DEF and mis-point
+     * button_def_pc.  Taking the first match (break) also makes the target
+     * deterministic if a payload somehow contains more than one. */
+    for (uint16_t i = pc; i < word_count; i++) {
+        if (get_word(i) == 0xeaee) { button_def_pc = i + 2; break; }
     }
 
     /* Pre-apply initial ATTACKMODE so USB enumerates in the right mode. */
@@ -842,10 +1002,29 @@ int main(void)
      * g_last_msc_cyc to "now" so the mount-done latch starts un-latched. */
     g_last_msc_cyc = cyc();
     usb_msc_set_budget(0);
-    hid_warmup();
+    /* No hid_warmup() here either: wait_for_host_polling() above already proved
+     * the host is polling EP1, and the warm-up ramp in send_key() paces the
+     * opening keystrokes.  hid_warmup's drain-rate probe would only stall boot
+     * for up to its failsafe while the host is busy bringing up the SD drive. */
 
     g_payload_run = true;
     blink_t0 = cyc();
+
+    /* Seed the PRNG from real boot entropy so RANDOM_* differs every power-on.
+     * rand_seed was a fixed constant (12345), so every boot produced the exact
+     * same "random" sequence.  The cycle counter here has accumulated the SD
+     * mount + USB enumeration time (both card/host dependent and variable),
+     * mixed with the payload size and its first byte — plenty of non-repeating
+     * variation for RANDOM_CHAR / RANDOM_NUMBER / etc. */
+    rand_seed ^= cyc() ^ ((uint32_t)g_word_count << 16) ^ (uint32_t)payload_ram[0];
+
+    /* One-shot latch for the implicit BUTTON_DEF trigger.  A physical button
+     * press lasts many interpreter iterations, so without this the handler
+     * re-fired on EVERY iteration the button stayed down — one press ran the
+     * BUTTON_DEF body over and over.  Fire once per press: disarm on trigger,
+     * re-arm only after the button is seen released (matches the explicit
+     * WAIT_FOR_BUTTON_PRESS one-per-press semantics). */
+    bool button_impl_armed = true;
 
     /* =================================================================
      * Interpreter
@@ -854,13 +1033,18 @@ int main(void)
         usb_device_task();
         blink_tick();
 
+        /* Re-arm the implicit trigger once the button is physically released. */
+        if (gpio_read(BTN_PORT, BTN_PIN)) button_impl_armed = true;
+
         /* Implicit button → BUTTON_DEF jump (only if the payload has a
-         * BUTTON_DEF block AND we're not already inside one). */
-        if (!gpio_read(BTN_PORT, BTN_PIN)
+         * BUTTON_DEF block, we're not already inside one, and the trigger is
+         * armed = the button was released since the last time it fired). */
+        if (button_impl_armed && !gpio_read(BTN_PORT, BTN_PIN)
             && button_enabled && !in_button_handler && button_def_pc != 0)
         {
             button_push_received = 1;
             if (call_stack_ptr < 32) {
+                button_impl_armed       = false;  /* one shot until released */
                 in_button_handler       = true;
                 call_stack[call_stack_ptr++] = pc;
                 pc = button_def_pc;
@@ -963,24 +1147,40 @@ int main(void)
             payload_delay(read_var(get_word(pc+1)));
             pc += 2; continue;
         }
-        if (word == 0xf6e9) { pc += 2; continue; }     /* EXFIL_VAR stub */
+        if (word == 0xf6e9) {                          /* EXFIL $VAR -> append to LOOT.BIN */
+            exfil_var(read_var(get_word(pc+1)));
+            pc += 2; continue;
+        }
         if (word==0xf0f0 || word==0xf1f1 || word==0xf2f2 || word==0xf3f3) {
             parse_attackmode(&pc, word_count);
             apply_attackmode();
             continue;
         }
-        if ((word >> 8) == 0x00) {                     /* DELAY literal */
+        if ((word >> 8) == 0x00) {                     /* DELAY chunk (0..255 ms) */
+            /* The real duck-encoder format splits DELAY > 255 ms into a run of
+             * [0x00, chunk] pairs (255-ms chunks + remainder), e.g.
+             * DELAY 500 -> [00 FF][00 F5].  Each pair is one delay chunk and
+             * they naturally sum, so a plain per-chunk delay is exactly correct.
+             * (0x00FF is just a 255-ms chunk here — NOT an extended-value
+             * marker; the Instructions3 note claiming otherwise is inaccurate.) */
             payload_delay(word & 0xFF);
             pc++; continue;
         }
 
         /* -------- Builtins / raw keystroke (default) ------------------ */
         switch (word) {
-            case 0x04ed:                                 break;       /* RESET (no-op) */
+            case 0x04ed:                                              /* RESET */
+                /* Clear the HID keystroke buffer: release every held key and
+                 * modifier (send an all-zero report).  Does NOT alter payload
+                 * flow (that's RESTART_PAYLOAD) — it just clears stuck hold
+                 * states, which is what RESET is for. */
+                hid_release_all();
+                break;
             case 0xebee: button_enabled = 0;             break;
             case 0xecee: button_enabled = 1;             break;
             case 0xebf1:                                              /* STOP_PAYLOAD */
                 hid_release_all();
+                exfil_flush();                 /* commit any buffered EXFIL loot */
                 led_green();
                 usb_msc_set_suppressed(false); /* idle: allow SD to mount */
                 while (1) usb_device_task();
@@ -996,6 +1196,10 @@ int main(void)
                 saved_caps_lock_on  = caps_lock_on;
                 saved_num_lock_on   = num_lock_on;
                 saved_scroll_on     = scroll_lock_on;
+                /* Arm OS detection: forget any earlier LED reply so the next one
+                 * is attributable to the lock-key toggle the extension is about
+                 * to send ($_RECEIVED_HOST_LOCK_LED_REPLY). */
+                received_led_reply  = 0;
                 break;
             case 0xebeb:                                              /* RESTORE_HOST_LOCK_STATE */
                 if (caps_lock_on   != saved_caps_lock_on)  send_key(0, 0x39);
@@ -1013,15 +1217,15 @@ int main(void)
                 current_pid        = saved_pid;
                 apply_attackmode();
                 break;
-            case 0x01ea: while (!caps_lock_on)   { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x02ea: while ( caps_lock_on)   { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x03ea: { uint16_t s=caps_lock_on;   while (caps_lock_on==s)   { usb_keepalive(); blink_tick(); poll_button(); } break; }
-            case 0x04ea: while (!num_lock_on)    { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x05ea: while ( num_lock_on)    { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x06ea: { uint16_t s=num_lock_on;    while (num_lock_on==s)    { usb_keepalive(); blink_tick(); poll_button(); } break; }
-            case 0x07ea: while (!scroll_lock_on) { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x08ea: while ( scroll_lock_on) { usb_keepalive(); blink_tick(); poll_button(); } break;
-            case 0x09ea: { uint16_t s=scroll_lock_on; while (scroll_lock_on==s) { usb_keepalive(); blink_tick(); poll_button(); } break; }
+            case 0x01ea: while (!caps_lock_on)   { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x02ea: while ( caps_lock_on)   { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x03ea: { uint16_t s=caps_lock_on;   while (caps_lock_on==s)   { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break; }
+            case 0x04ea: while (!num_lock_on)    { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x05ea: while ( num_lock_on)    { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x06ea: { uint16_t s=num_lock_on;    while (num_lock_on==s)    { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break; }
+            case 0x07ea: while (!scroll_lock_on) { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x08ea: while ( scroll_lock_on) { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break;
+            case 0x09ea: { uint16_t s=scroll_lock_on; while (scroll_lock_on==s) { usb_keepalive(); led_green();  poll_button();  /* idle wait -> solid green */ } break; }
 
             case 0xeaea: {                                            /* WAIT_FOR_BUTTON_PRESS */
                 /* Scrub host-side modifier state BEFORE the wait. */
@@ -1032,13 +1236,17 @@ int main(void)
                  * finishes mounting while the user decides to press. */
                 usb_msc_set_budget(-1);
 
+                /* LED: SOLID green = Idle (the device is waiting for the user's
+                 * button press and doing nothing else).  Set it once and do NOT
+                 * blink during the wait — that steady green is the "Idle" state. */
+                led_green();
+
                 /* Consume a latched press; otherwise wait for a fresh one. */
                 if (button_pending) {
                     button_pending = 0;
                 } else {
                     while (gpio_read(BTN_PORT, BTN_PIN)) {
                         usb_keepalive();
-                        blink_tick();
                         if (button_pending) { button_pending = 0; break; }
                     }
                 }
@@ -1050,18 +1258,25 @@ int main(void)
                 delay_ms(20);
                 button_pending = 0;
 
-                /* Quiet storage again, then warm up HID polling (also scrubs
-                 * modifiers) so the STRING after the button doesn't drop its
-                 * leading characters.  send_key() trickles storage from here. */
+                /* Quiet storage again; send_key() trickles it from here.  No
+                 * hid_warmup() — by the time the user presses the button the host
+                 * input stack is long warmed up, so it would only add latency. */
                 usb_msc_set_budget(0);
-                hid_warmup();
                 break;
             }
 
             default: {                                                /* Raw HID key (keycode<<8 | mod) */
                 uint8_t keycode  = (uint8_t)(word >> 8);
                 uint8_t modifier = (uint8_t)(word & 0xFF);
-                send_key(modifier, keycode);
+                /* Plausibility gate.  A real typed key ALWAYS carries a usage ID
+                 * in 0x04..0x65 (the range this HID report descriptor even
+                 * declares — Logical Maximum 101).  Anything outside that is not
+                 * a keystroke at all: it is a control/opcode word or a DELAY
+                 * value word that drifted into the default case, and sending it
+                 * is exactly what produced stray characters and rogue modifier
+                 * combos.  Treat those as a NOP instead of injecting garbage. */
+                if (keycode >= 0x04 && keycode <= 0x65)
+                    send_key(modifier, keycode);
                 break;
             }
         }
@@ -1069,6 +1284,7 @@ int main(void)
     }
 
     g_payload_run = false;
+    exfil_flush();                 /* commit any buffered EXFIL loot to LOOT.BIN */
     led_green();
     usb_msc_set_suppressed(false); /* idle: let the SD card stay/finish mounting */
     while (1) usb_device_task();

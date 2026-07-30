@@ -1,6 +1,22 @@
-# AT32UC3B1 Custom HID Firmware
+# AT32UC3B1 USB Rubber Ducky Firmware
 
-Custom USB Generic HID firmware for the **Atmel AT32UC3B1** (AVR32 UC3B1256) microcontroller.
+Keystroke-injection firmware for the **Atmel AT32UC3B1** (AVR32 UC3B1256)
+microcontroller. On boot it mounts the SD card over SPI, reads `INJECT.BIN` into
+RAM, and interprets it as a stream of 16-bit big-endian words — each word is
+either a control opcode (DELAY, GOTO, IF, ATTACKMODE, WAIT_FOR_BUTTON_PRESS, …)
+or a raw HID keystroke encoded as `(keycode << 8) | modifier`. The device
+enumerates as a **HID keyboard only**; the SD card is never exposed to the host
+(see the design note under *Reliability* and `FIXES.md`).
+
+> **Bug fixes:** see [`FIXES.md`](FIXES.md) for the recent fixes (HID-only force,
+> extended DELAY, keycode plausibility gate) and the two Python verification tools
+> in `tools/` (`firmware_sim.py`, `inject_inspect.py`).
+
+> **Note:** parts of the older sections below (the "HID Report Protocol"
+> heartbeat/LED command table and the "Add SD Card Support" note) describe an
+> earlier generic-HID demo and **do not apply** to this Rubber Ducky build — the
+> SD card is central here, not optional. They are kept only for historical
+> reference and will be pruned.
 
 ---
 
@@ -238,11 +254,13 @@ In `src/usb_descriptors.h`:
 #define USB_PRODUCT_ID  0x2402   // Your PID
 ```
 
-### Add SD Card Support
+### SD Card (already in use — historical note corrected)
 
-The SD card slot is not currently used. To add SPI-based SD card support,
-connect the SD card's SPI pins to the UC3B1's SPI peripheral (pins vary by board)
-and implement a lightweight FAT library (e.g., FatFs by ChaN).
+> The claim that "the SD card slot is not currently used" applied to the old
+> demo firmware. **This build uses the SD card as its core input**: `main.c`
+> mounts it with Petit FatFs (`pf_mount`) and reads `INJECT.BIN` at boot
+> (`src/pff.c`, `src/mmc.c`). The compiled payload lives on the card; the host
+> never sees the card as a drive.
 
 ---
 
