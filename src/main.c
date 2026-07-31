@@ -258,6 +258,12 @@ void usb_hid_report_out_cb(uint8_t *data, uint8_t length) {
  * a bare modifier (e.g. CTRL for a combo) is intentional. */
 static bool g_allow_bare_modifier = false;
 
+/* INJECT_MOD (opcode 0xe6e9) prefixes a bare-modifier action: either a modifier
+ * TAP (`INJECT_MOD WINDOWS` -> 0xe6e9 followed by a keycode-0 modifier word) or
+ * a modifier HOLD (`INJECT_MOD` then `HOLD CONTROL` -> 0xe6e9 followed by
+ * KEY_DOWN).  Set when 0xe6e9 is seen; consumed by the very next word. */
+static bool inject_mod_pending = false;
+
 static void hid_send_one(const keyboard_report_t *src) {
     keyboard_report_t r = *src;
 
@@ -1179,6 +1185,33 @@ int main(void)
         }
 
         uint16_t word = get_word(pc);
+
+        /* INJECT_MOD prefix consumed here.  The NEXT word is a bare-modifier
+         * action:  a keycode-0 modifier word => a modifier TAP (press+release);
+         * anything else (e.g. KEY_DOWN for a HOLD) falls through and is handled
+         * normally — KEY_DOWN already permits a bare modifier. */
+        if (inject_mod_pending) {
+            inject_mod_pending = false;
+            if ((word >> 8) == 0x00) {        /* keycode 0 -> bare modifier tap */
+                uint8_t mod = (uint8_t)(word & 0xFF);
+                if (mod) {
+                    g_allow_bare_modifier = true;
+                    hid_send_report(mod, 0);
+                    g_allow_bare_modifier = false;
+                    settle(TYPE_HOLD_MS);
+                    hid_release_all();
+                    settle(TYPE_HOLD_MS);
+                }
+                pc++;
+                continue;                     /* would otherwise be read as DELAY */
+            }
+            /* else: INJECT_MOD before a HOLD — let KEY_DOWN handle it. */
+        }
+        if (word == 0xe6e9) {                 /* INJECT_MOD */
+            inject_mod_pending = true;
+            pc++;
+            continue;
+        }
 
         /* -------- Control opcodes (caught before raw key default) ----- */
         if (word == 0xe801) {                 /* ASSIGNMENT */

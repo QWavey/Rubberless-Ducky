@@ -23,7 +23,7 @@ guessed. Keep `tools/inject_inspect.py` in sync with any change here.
 | Lock keys | all 9 `WAIT_FOR_*`, `SAVE_/RESTORE_HOST_KEYBOARD_LOCK_STATE` |
 | Button | `WAIT_FOR_BUTTON_PRESS`, `BUTTON_DEF`/`END_BUTTON`, `ENABLE_/DISABLE_BUTTON` |
 | LEDs | `LED_OFF/R/G` |
-| Holds | `HOLD`/`RELEASE` (`KEY_DOWN`/`KEY_UP`) |
+| Holds | `HOLD`/`RELEASE` (`KEY_DOWN`/`KEY_UP`), `INJECT_MOD` (bare modifier) |
 | Randomization | all 6 `RANDOM_*` |
 | Exfil | `EXFIL` → `LOOT.BIN` |
 | Payload control | `STOP_PAYLOAD`, `RESET`, **`RESTART_PAYLOAD`**, **`HIDE_PAYLOAD`**, **`RESTORE_PAYLOAD`** |
@@ -38,6 +38,16 @@ Bold = added in the full-parity pass.
 | `RESTART_PAYLOAD` | `0xeaf1` | tests/1.bin |
 | `HIDE_PAYLOAD` | `0xf8e9` | tests/2.bin |
 | `RESTORE_PAYLOAD` | `0xf9e9` | tests/2.bin |
+| `INJECT_MOD` | `0xe6e9` | tests/11.bin |
+
+### INJECT_MOD — was a real bug, now fixed
+`INJECT_MOD <MODIFIER>` (tap a modifier alone, e.g. `INJECT_MOD WINDOWS`)
+compiles to `0xe6e9` followed by a keycode-0 modifier word (`0x0008` for GUI).
+The firmware did not handle `0xe6e9`, so it was dropped and the following
+`0x0008` was read as `DELAY 8ms` — the modifier was never pressed. Now `0xe6e9`
+sets a prefix flag; the next word is taken as a bare-modifier TAP (press+release)
+when it is a keycode-0 modifier, or falls through to `KEY_DOWN` for the HOLD form
+(`INJECT_MOD` then `HOLD CONTROL`). Verified against `tests/11.bin`.
 
 ### Internal variables added
 | Variable | Token | Source |

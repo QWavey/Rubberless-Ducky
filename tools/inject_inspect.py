@@ -146,6 +146,16 @@ def disasm(data):
                 j += 1
             i = j
             continue
+        if w == 0xe6e9:                    # INJECT_MOD (bare-modifier prefix)
+            nxt = words[i+1] if i + 1 < n else None
+            if nxt is not None and (nxt >> 8) == 0x00 and (nxt & 0xFF):
+                print(f"{i:>4}  {addr:>5}  0x{w:04x}  INJECT_MOD {mods(nxt & 0xFF)} "
+                      f"(bare-modifier tap)")
+                i += 2
+            else:
+                print(f"{i:>4}  {addr:>5}  0x{w:04x}  INJECT_MOD (prefix for HOLD)")
+                i += 1
+            continue
         if w == 0xe801:                    # ASSIGN dest, s1, op, [s2]
             def vname(x):
                 return VARS.get(x, f"var[0x{x:04x}]" if x < 0x0400 else f"0x{x:04x}")
