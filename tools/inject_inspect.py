@@ -69,6 +69,11 @@ OPCODES = {
     0xeae9: "SAVE_ATTACKMODE",
     0xebe9: "RESTORE_ATTACKMODE",
     0xeaea: "WAIT_FOR_BUTTON_PRESS",
+    0x01ea: "WAIT_FOR_CAPS_ON",    0x02ea: "WAIT_FOR_CAPS_OFF",
+    0x03ea: "WAIT_FOR_CAPS_CHANGE", 0x04ea: "WAIT_FOR_NUM_ON",
+    0x05ea: "WAIT_FOR_NUM_OFF",    0x06ea: "WAIT_FOR_NUM_CHANGE",
+    0x07ea: "WAIT_FOR_SCROLL_ON",  0x08ea: "WAIT_FOR_SCROLL_OFF",
+    0x09ea: "WAIT_FOR_SCROLL_CHANGE",
     0xeaf1: "RESTART_PAYLOAD",
     0xf8e9: "HIDE_PAYLOAD",
     0xf9e9: "RESTORE_PAYLOAD",
@@ -143,6 +148,36 @@ def disasm(data):
                 j += 1
             if j < n:
                 print(f"{j:>4}  {j*2:>5}  0x{words[j]:04x}  REGISTERS (constant pool end)")
+                j += 1
+            i = j
+            continue
+        if w in (0xf0f0, 0xf1f1, 0xf2f2, 0xf3f3):   # ATTACKMODE block
+            amname = {0xf0f0: "OFF", 0xf1f1: "HID",
+                      0xf2f2: "STORAGE", 0xf3f3: "HID+STORAGE"}[w]
+            print(f"{i:>4}  {addr:>5}  0x{w:04x}  ATTACKMODE {amname}")
+            j = i + 1
+            # options run until the SAME opcode repeats (terminator) — matches
+            # parse_attackmode() in main.c.
+            while j < n and words[j] != w:
+                p = words[j]
+                if p == 0xf5f5 and j + 1 < n:
+                    print(f"{j:>4}  {j*2:>5}  0x{p:04x}  VID_ = {VARS.get(words[j+1], f'0x{words[j+1]:04x}')}")
+                    j += 2
+                elif p == 0xf6f6 and j + 1 < n:
+                    print(f"{j:>4}  {j*2:>5}  0x{p:04x}  PID_ = {VARS.get(words[j+1], f'0x{words[j+1]:04x}')}")
+                    j += 2
+                elif p in (0xf9f9, 0xfafa, 0xfbfb):   # MAN_/PROD_/SERIAL_ string, delimited by repeat
+                    lbl = {0xf9f9: "MAN_", 0xfafa: "PROD_", 0xfbfb: "SERIAL_"}[p]
+                    print(f"{j:>4}  {j*2:>5}  0x{p:04x}  {lbl}(string)")
+                    j += 1
+                    while j < n and words[j] != p:
+                        j += 1
+                    if j < n:
+                        j += 1                        # consume closing delimiter
+                else:
+                    j += 1
+            if j < n:
+                print(f"{j:>4}  {j*2:>5}  0x{words[j]:04x}  (ATTACKMODE end)")
                 j += 1
             i = j
             continue
