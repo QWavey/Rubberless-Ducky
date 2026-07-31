@@ -478,13 +478,6 @@ static void settle(uint32_t ms) {
 static uint16_t rand_range(uint16_t lo, uint16_t hi);   /* fwd: defined with the var-store below */
 
 static inline void send_key(uint8_t modifier, uint8_t keycode) {
-    /* AltGr fix.  Windows produces AltGr characters (German [ ] { } @ \ | ~ ...)
-     * from LeftCtrl+RightAlt, NOT RightAlt alone — but keymaps (de.json, etc.)
-     * encode AltGr as RightAlt (0x40).  Sending RightAlt alone made the host
-     * drop the modifier and type the bare key ('[' -> '8').  Add the LeftCtrl
-     * the OS expects whenever RightAlt is present. */
-    if (modifier & MOD_RALT) modifier |= MOD_LCTRL;
-
     /* Latch "mount finished" (kept only for the storage-budget calls below;
      * with the forced HID-only profile there is no host drive, so this has no
      * effect on typing). */
@@ -526,14 +519,29 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
      * (constant symbol/case switching) the host sampled keys mid-transition, so
      * the modifier bled onto neighbours ('(' -> '8', a stray Shift on the next
      * key, AltGr dropped). */
-    uint8_t want = (uint8_t)(g_held_mods | modifier);
-    if (want != g_host_mod) {
-        hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
-        settle(MOD_SETTLE_MS);
+    if (modifier & MOD_RALT) {
+        /* AltGr ( [ ] { } @ \ | ~ ... ): press RightAlt TOGETHER with the key in
+         * one report and release fully — never emit a lone-RightAlt report.
+         * Windows treats a RightAlt-only report as a plain Alt (menu), which
+         * dropped/ate these chars; pressed atomically with the key it is read as
+         * AltGr.  An AltGr symbol run has no Shift neighbours to bleed from, so
+         * the per-key release is safe here. */
+        if (g_host_mod) hid_send_held(0, 0);   /* drop any held Shift first */
+        hid_send_held(modifier, keycode);
+        settle(hold);
+        hid_send_held(0, 0);
+    } else {
+        /* Shift/Ctrl/Gui: state machine — establish the modifier once and hold it
+         * across a run of same-modifier keys, pulsing just the keycode. */
+        uint8_t want = (uint8_t)(g_held_mods | modifier);
+        if (want != g_host_mod) {
+            hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
+            settle(MOD_SETTLE_MS);
+        }
+        hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
+        settle(hold);
+        hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     }
-    hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
-    settle(hold);
-    hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
     settle(hold);
     usb_msc_set_budget(0);
