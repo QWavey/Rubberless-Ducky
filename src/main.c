@@ -1215,12 +1215,23 @@ int main(void)
 
         /* -------- Control opcodes (caught before raw key default) ----- */
         if (word == 0xe801) {                 /* ASSIGNMENT */
+            /* Layout emitted by the compiler:
+             *   copy:      e801 dest s1 0000          (4 words)
+             *   binary op: e801 dest s1 s2 OP         (5 words)
+             * i.e. the OPERATOR is the LAST (5th) word and s2 is the 4th — NOT
+             * the other way round.  The 4th word being 0 disambiguates a plain
+             * copy (s2 operands are always nonzero register/token addresses).
+             * (Earlier this read op from the 4th word and s2 from the 5th, which
+             * swapped them: eval_op got a register number as its opcode and hit
+             * the default `return 0`, so EVERY +,-,*,compare — and thus every IF
+             * condition and WHILE test — silently evaluated to 0.  Verified
+             * against a real compiled sample, tests/13.bin.) */
             uint16_t dest = get_word(pc+1);
             uint16_t s1   = get_word(pc+2);
-            uint16_t op   = get_word(pc+3);
-            if (op == 0) { write_var(dest, read_var(s1)); pc += 4; }
+            uint16_t s2   = get_word(pc+3);
+            if (s2 == 0) { write_var(dest, read_var(s1)); pc += 4; }
             else {
-                uint16_t s2 = get_word(pc+4);
+                uint16_t op = get_word(pc+4);
                 write_var(dest, eval_op(op, read_var(s1), read_var(s2)));
                 pc += 5;
             }

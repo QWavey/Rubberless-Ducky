@@ -10,6 +10,17 @@ they compile down to primitives the firmware already implements (raw keystrokes,
 **derived from real PayloadStudio-compiled samples** (`tests/1..4.bin`), never
 guessed. Keep `tools/inject_inspect.py` in sync with any change here.
 
+## CRITICAL fix — binary-operator operand order (found via tests/13.bin)
+The compiler emits a binary operation as `e801 dest s1 s2 OP` (operator LAST).
+The interpreter read `op` from the 4th word and `s2` from the 5th — swapped — so
+`eval_op` received a register number as its opcode, hit `default: return 0`, and
+EVERY `+ - * / % ^ == != < > <= >= && || & | << >>` evaluated to 0. Because
+`IF`/`WHILE` conditions are compiled as a comparison into a temp then a branch,
+this silently broke **all conditionals and loops** too. Simple copies
+(`op == 0`, 4-word form) were unaffected, which is why tests/3–7 never exposed it.
+Fixed: `s2 = word[pc+3]`, `op = word[pc+4]`; the 4th word being 0 still
+disambiguates a plain copy. Verified against tests/13.bin.
+
 ## Covered ✅
 
 | Area | Commands |

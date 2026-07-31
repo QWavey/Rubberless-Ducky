@@ -107,6 +107,14 @@ ARG_WORDS = {0xe801: 1, 0xefef: 2, 0x1ff4: 1, 0xf8f8: 1, 0xf7f7: 1,
              0xfff8: 1, 0xeee8: 1, 0xeaee: 1, 0xebf4: 1, 0xe9e9: 1,
              0xe7e9: 1, 0xf6e9: 1}
 
+# eval_op operator opcodes -> symbol (matches eval_op() in main.c)
+EVAL_OPS = {
+    0xe802: "+", 0xe803: "-", 0xe804: "*", 0xe805: "/", 0xe80e: "%",
+    0x0fe8: "^", 0xe806: "==", 0xe807: "!=", 0xe808: "<", 0xe809: ">",
+    0xe8a8: "<=", 0xe8a9: ">=", 0xe8aa: "&&", 0xe8bb: "||",
+    0xe80a: "&", 0xe80b: "|", 0xe80c: ">>", 0xe80d: "<<",
+}
+
 MOD_BITS = [(0x01, "LCtrl"), (0x02, "LShift"), (0x04, "LAlt"), (0x08, "LGui"),
             (0x10, "RCtrl"), (0x20, "RShift"), (0x40, "RAlt"), (0x80, "RGui")]
 
@@ -191,19 +199,19 @@ def disasm(data):
                 print(f"{i:>4}  {addr:>5}  0x{w:04x}  INJECT_MOD (prefix for HOLD)")
                 i += 1
             continue
-        if w == 0xe801:                    # ASSIGN dest, s1, op, [s2]
+        if w == 0xe801:                    # ASSIGN: dest, s1, s2, OP  (OP is LAST)
             def vname(x):
                 return VARS.get(x, f"var[0x{x:04x}]" if x < 0x0400 else f"0x{x:04x}")
             dest = words[i+1] if i+1 < n else 0
             s1   = words[i+2] if i+2 < n else 0
-            op   = words[i+3] if i+3 < n else 0
-            if op == 0:
+            s2   = words[i+3] if i+3 < n else 0
+            if s2 == 0:                    # 4th word 0 -> plain copy
                 print(f"{i:>4}  {addr:>5}  0x{w:04x}  ASSIGN {vname(dest)} = {vname(s1)}")
                 i += 4
             else:
-                s2 = words[i+4] if i+4 < n else 0
+                op = words[i+4] if i+4 < n else 0
                 print(f"{i:>4}  {addr:>5}  0x{w:04x}  ASSIGN {vname(dest)} = "
-                      f"{vname(s1)} op(0x{op:04x}) {vname(s2)}")
+                      f"{vname(s1)} {EVAL_OPS.get(op, f'op(0x{op:04x})')} {vname(s2)}")
                 i += 5
             continue
         if w in OPCODES:
