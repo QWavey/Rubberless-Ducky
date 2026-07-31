@@ -453,18 +453,20 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS         16    /* steady-state per-key hold + gap.  Reports are all
-                                     * DELIVERED (TXFAIL=0); the residual drops are the
-                                     * Windows input stack missing a keydown when the
-                                     * key is not held across enough of its ~poll window.
-                                     * Holding each key longer fixes that host-side. */
+#define TYPE_HOLD_MS         16    /* KEY-HELD duration (press->release).  16 ms is the
+                                     * value proven drop-free on hardware — the Windows
+                                     * input stack needs the keydown present this long to
+                                     * catch it.  This one must NOT be cut. */
+#define KEY_GAP_MS            3    /* inter-key gap (release->next press).  The host does
+                                     * NOT need this to be long, so it stays short to keep
+                                     * typing fast — only the hold above matters. */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
-#define WARMUP_SLOW_KEYS      24   /* first N keys: slowest (was 64 — trimmed for a
-                                     * quicker start, still enough to seat the host
-                                     * input stack on the opening STRING)         */
-#define WARMUP_SLOW_EXTRA_MS  12   /* ...held TYPE_HOLD_MS + this                 */
-#define WARMUP_RAMP_KEYS      56   /* up to N keys: medium (was 130)              */
-#define WARMUP_RAMP_EXTRA_MS  6    /* ...held TYPE_HOLD_MS + this                 */
+#define WARMUP_SLOW_KEYS      8    /* first N keys: slowest.  With a reliable 16 ms base
+                                     * hold the opening no longer needs a long ramp, so
+                                     * this is short for a quick start.            */
+#define WARMUP_SLOW_EXTRA_MS  8    /* ...held TYPE_HOLD_MS + this                 */
+#define WARMUP_RAMP_KEYS      20   /* up to N keys: medium                        */
+#define WARMUP_RAMP_EXTRA_MS  4    /* ...held TYPE_HOLD_MS + this                 */
 /* ========================================================================== */
 
 static uint16_t char_settle_ms = TYPE_HOLD_MS;
@@ -558,10 +560,10 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
         settle(MOD_SETTLE_MS);
     }
     hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
-    settle(hold);
+    settle(hold);                       /* KEY HELD — the drop-critical duration */
     hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
-    settle(hold);
+    settle(KEY_GAP_MS);                 /* short inter-key gap (host doesn't need long) */
     usb_msc_set_budget(0);
 }
 
