@@ -500,6 +500,17 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
         hold += rand_range(0, jitter_max);
 
     usb_msc_set_budget(0);
+    /* Modifier-first: for a shifted/AltGr key, press the MODIFIER in its own
+     * report and let it settle before adding the keycode.  On German (and any
+     * layout with many shifted/AltGr symbols) the old single-report press let
+     * the host sample the key mid-modifier-transition, so the modifier bled onto
+     * the neighbouring keystroke — '(' typed as '8' (Shift lost) while the next
+     * key gained a stray Shift.  Pressing the modifier first, exactly as a human
+     * does, pins it to THIS key. */
+    if (modifier) {
+        hid_send_held(modifier, 0);
+        settle(2);
+    }
     hid_send_held(modifier, keycode);   /* press typed key ON TOP of any held keys */
     settle(hold);
     hid_send_held(0, 0);                /* release just the typed key; holds persist */
