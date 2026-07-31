@@ -335,6 +335,18 @@ static void hid_send_one(const keyboard_report_t *src) {
      * NBUSYBK == 0 (usb_hid_in_all_sent) is the real "delivered" signal: it is
      * zero only once the host has drained every queued bank.  Gate on that so
      * each press and each release is individually collected before we move on. */
+    /* Close the queue/drain race.  After Phase 1 commits the bank (FIFOCON), the
+     * hardware needs a beat to read NBUSYBK back as busy.  If the drain check
+     * below ran that instant it could see NBUSYBK==0 ("already delivered") and
+     * let the RELEASE be queued before the host had taken the PRESS — the two
+     * then land in the two banks together and the host coalesces them, dropping
+     * the character (the 'fixed'->'ixed' drops).  Spin (without pumping USB, so
+     * the host can't drain mid-check) until the bank actually shows busy first. */
+    uint32_t tq = cyc();
+    while (usb_hid_in_all_sent()) {
+        if ((cyc() - tq) > CYCLES_PER_MS) break;   /* safety: assume it queued */
+    }
+
     uint32_t t0 = cyc();
     while (!usb_hid_in_all_sent()) {
         if ((cyc() - t0) > CYCLES_PER_MS * TX_TIMEOUT_MS) return;
