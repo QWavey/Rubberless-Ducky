@@ -245,13 +245,6 @@ void usb_hid_report_out_cb(uint8_t *data, uint8_t length) {
  * ====================================================================== */
 #define TX_TIMEOUT_MS 1000u
 
-/* Diagnostic: counts how many report sends GAVE UP (timed out) in hid_send_one.
- * A non-zero value at the end means the firmware itself failed to deliver a
- * report; zero means every report was delivered and any dropped characters are
- * host-side.  Typed out at payload end as "[TXFAIL=N SENT=M]". */
-static volatile uint32_t g_hid_tx_fail = 0;
-static volatile uint32_t g_hid_tx_sent = 0;
-
 /* When false (the default), the transmit choke-point refuses to send a
  * "modifier-only" report (a non-zero modifier with NO keycode).  A keycode
  * detector proved the device was flooding bare modifier reports after the
@@ -325,7 +318,7 @@ static void hid_send_one(const keyboard_report_t *src) {
             usb_hid_send_report((const uint8_t*)&r, sizeof(r))) {
             break;  /* report is in the bank */
         }
-        if ((cyc() - overall) > CYCLES_PER_MS * TX_TIMEOUT_MS) { g_hid_tx_fail++; return; } /* anti-hang */
+        if ((cyc() - overall) > CYCLES_PER_MS * TX_TIMEOUT_MS) return; /* anti-hang only */
         usb_device_task();
         poll_button();
     }
@@ -356,11 +349,10 @@ static void hid_send_one(const keyboard_report_t *src) {
 
     uint32_t t0 = cyc();
     while (!usb_hid_in_all_sent()) {
-        if ((cyc() - t0) > CYCLES_PER_MS * TX_TIMEOUT_MS) { g_hid_tx_fail++; return; }
+        if ((cyc() - t0) > CYCLES_PER_MS * TX_TIMEOUT_MS) return;
         usb_device_task();
         poll_button();
     }
-    g_hid_tx_sent++;   /* report fully delivered (drained) */
 }
 
 /* Send one keypress.  ALWAYS paired with an immediate release via the
@@ -1619,24 +1611,6 @@ int main(void)
 
     g_payload_run = false;
     exfil_flush();                 /* commit any buffered EXFIL loot to LOOT.BIN */
-
-    /* ---- DIAGNOSTIC (temporary): type the report-send tallies --------------
-     * "[TXFAIL=N SENT=M]".  TXFAIL is how many reports hid_send_one gave up on
-     * (timed out); SENT is how many fully drained to the host.  If TXFAIL is 0
-     * but characters were still dropped on screen, the firmware delivered every
-     * report and the loss is host-side (input-stack coalescing) — which points
-     * the fix at report timing/structure, not the send path. */
-    {
-        const char *t = "\n[TXFAIL=";
-        while (*t) type_char(*t++);
-        type_number((int)g_hid_tx_fail);
-        const char *t2 = " SENT=";
-        while (*t2) type_char(*t2++);
-        type_number((int)g_hid_tx_sent);
-        type_char(']');
-        type_char('\n');
-    }
-
     led_green();
     usb_msc_set_suppressed(false); /* idle: let the SD card stay/finish mounting */
     while (1) usb_device_task();
