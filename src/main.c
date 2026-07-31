@@ -306,22 +306,50 @@ static void hid_send_one(const keyboard_report_t *src) {
 
     uint32_t overall = cyc();
 
-    /* ---- Send, single-bank ---------------------------------------------------
-     * EP1-IN is now SINGLE-banked.  usb_hid_send_report() writes only when TXINI
-     * says the bank is FREE, and with ONE bank that is true ONLY after the host
-     * has already collected the PREVIOUS report.  So looping here until it is
-     * accepted serializes every report by construction: the press is guaranteed
-     * to be taken by the host before its release can be written, and likewise
-     * before the next character's press — the release/press can never land in the
-     * endpoint together and be coalesced.  This is exactly how a reliable
-     * single-bank Arduino/wifiduck keyboard avoids dropped characters, and it
-     * removes the double-bank NBUSYBK drain race that dropped them here. */
+    /* ---- Phase 1: actually QUEUE the report ------------------------------
+     * The old code waited for the bank to be free, then called
+     * usb_hid_send_report() and IGNORED its return value.  usb_hid_send_report
+     * re-checks readiness and returns false (sending NOTHING) if the bank
+     * isn't free at that instant — so a press could silently vanish while the
+     * following release sailed through, dropping exactly one character (e.g.
+     * "Make" → "ake").  We now loop until the report is genuinely accepted. */
     for (;;) {
         if (usb_hid_in_endpoint_ready() &&
             usb_hid_send_report((const uint8_t*)&r, sizeof(r))) {
-            break;  /* accepted into the (now-free) single bank */
+            break;  /* report is in the bank */
         }
         if ((cyc() - overall) > CYCLES_PER_MS * TX_TIMEOUT_MS) return; /* anti-hang only */
+        usb_device_task();
+        poll_button();
+    }
+
+    /* ---- Phase 2: wait until the host has ACTUALLY COLLECTED the report ----
+     * EP1-IN is DOUBLE-banked (usb_descriptors/usb_hid.c: UECFG1 EPBK=1), so
+     * TXINI ("a bank is free") goes true the instant we queue — the OTHER bank
+     * is free while the report we just wrote still sits UNREAD in this one.
+     * Waiting on TXINI therefore returned immediately, we fired the release
+     * before the host took the press, and Windows coalesced the press+release
+     * into nothing — dropping whole characters AND stripping the Shift modifier
+     * off shifted keys (e.g. the German symbol row degrading to bare digits).
+     *
+     * NBUSYBK == 0 (usb_hid_in_all_sent) is the real "delivered" signal: it is
+     * zero only once the host has drained every queued bank.  Gate on that so
+     * each press and each release is individually collected before we move on. */
+    /* Close the queue/drain race.  After Phase 1 commits the bank (FIFOCON), the
+     * hardware needs a beat to read NBUSYBK back as busy.  If the drain check
+     * below ran that instant it could see NBUSYBK==0 ("already delivered") and
+     * let the RELEASE be queued before the host had taken the PRESS — the two
+     * then land in the two banks together and the host coalesces them, dropping
+     * the character (the 'fixed'->'ixed' drops).  Spin (without pumping USB, so
+     * the host can't drain mid-check) until the bank actually shows busy first. */
+    uint32_t tq = cyc();
+    while (usb_hid_in_all_sent()) {
+        if ((cyc() - tq) > CYCLES_PER_MS) break;   /* safety: assume it queued */
+    }
+
+    uint32_t t0 = cyc();
+    while (!usb_hid_in_all_sent()) {
+        if ((cyc() - t0) > CYCLES_PER_MS * TX_TIMEOUT_MS) return;
         usb_device_task();
         poll_button();
     }

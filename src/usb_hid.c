@@ -427,14 +427,12 @@ static void configure_hid_endpoints(void)
         AVR32_USBB.uecfg1 = (3 << AVR32_USBB_UECFG1_EPTYPE_OFFSET)  /* Interrupt */
                            | (1 << AVR32_USBB_UECFG1_EPDIR_OFFSET)   /* IN */
                            | (3 << AVR32_USBB_UECFG1_EPSIZE_OFFSET)  /* 64 bytes */
-                           | (0 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* SINGLE bank */
+                           | (1 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* DOUBLE bank */
                            | AVR32_USBB_UECFG1_ALLOC_MASK;
-        /* SINGLE bank — the reliable Arduino/wifiduck model.  With one bank, the
-         * "bank free" (TXINI) test is true ONLY after the host has taken the
-         * previous report, so hid_send_one()'s TXINI-gated write serializes every
-         * report: a press is always collected before its release is written, no
-         * coalescing.  (The earlier single-bank try corrupted because it still
-         * ran the double-bank NBUSYBK drain in hid_send_one — now removed.) */
+        /* DOUBLE bank.  (A single-bank experiment — matching Arduino/wifiduck —
+         * corrupted the first line on this USBB: the FIFO got written while the
+         * lone bank was still busy, injecting stray keys.  The double bank + the
+         * NBUSYBK drain wait in hid_send_one() is the reliable path here.) */
         
 
         while (!(AVR32_USBB.uesta1 & AVR32_USBB_UESTA1_CFGOK_MASK));
