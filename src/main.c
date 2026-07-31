@@ -433,8 +433,10 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS          4    /* steady-state per-key hold + gap            */
-#define MOD_SETTLE_MS         5    /* settle after a Shift/AltGr change before the key */
+#define TYPE_HOLD_MS          8    /* steady-state per-key hold + gap (raised from 4:
+                                     * 4 ms dropped chars under sustained typing) */
+#define MOD_SETTLE_MS        12    /* settle after a Shift/AltGr change before the key
+                                     * (AltGr needs generous time to register)    */
 #define WARMUP_SLOW_KEYS      64   /* first N keys: slowest                      */
 #define WARMUP_SLOW_EXTRA_MS  14   /* ...held TYPE_HOLD_MS + this  (~36 ms/char) */
 #define WARMUP_RAMP_KEYS      130  /* up to N keys: medium                       */
@@ -519,29 +521,21 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
      * (constant symbol/case switching) the host sampled keys mid-transition, so
      * the modifier bled onto neighbours ('(' -> '8', a stray Shift on the next
      * key, AltGr dropped). */
-    if (modifier & MOD_RALT) {
-        /* AltGr ( [ ] { } @ \ | ~ ... ): press RightAlt TOGETHER with the key in
-         * one report and release fully — never emit a lone-RightAlt report.
-         * Windows treats a RightAlt-only report as a plain Alt (menu), which
-         * dropped/ate these chars; pressed atomically with the key it is read as
-         * AltGr.  An AltGr symbol run has no Shift neighbours to bleed from, so
-         * the per-key release is safe here. */
-        if (g_host_mod) hid_send_held(0, 0);   /* drop any held Shift first */
-        hid_send_held(modifier, keycode);
-        settle(hold);
-        hid_send_held(0, 0);
-    } else {
-        /* Shift/Ctrl/Gui: state machine — establish the modifier once and hold it
-         * across a run of same-modifier keys, pulsing just the keycode. */
-        uint8_t want = (uint8_t)(g_held_mods | modifier);
-        if (want != g_host_mod) {
-            hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
-            settle(MOD_SETTLE_MS);
-        }
-        hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
-        settle(hold);
-        hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
+    /* Modifier state machine for ALL modifiers (Shift, AltGr, Ctrl, Gui).
+     * Establish the wanted modifier in its own report and let it settle ONLY
+     * when it changes, then hold it across a run of same-modifier keys, pulsing
+     * just the keycode — exactly how a physical keyboard holds Shift for "ABC"
+     * or AltGr for a "[]{}" run.  Verified: physical AltGr+8 = '[' on this host,
+     * so RightAlt held across the run is correct; it just needs the generous
+     * MOD_SETTLE_MS to register. */
+    uint8_t want = (uint8_t)(g_held_mods | modifier);
+    if (want != g_host_mod) {
+        hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
+        settle(MOD_SETTLE_MS);
     }
+    hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
+    settle(hold);
+    hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
     settle(hold);
     usb_msc_set_budget(0);
