@@ -274,6 +274,14 @@ static bool inject_mod_pending = false;
 static uint8_t g_held_keys[6] = {0};
 static uint8_t g_held_mods    = 0;
 
+/* Modifier currently pressed on the HOST during typing.  send_key() keeps a
+ * shifted/AltGr modifier held across a run of same-modifier keys (only changing
+ * it when it actually changes) instead of toggling it every keystroke — that
+ * per-key toggle is what let Shift/AltGr bleed onto neighbouring keys on layouts
+ * that switch modifiers constantly (German symbols, mixed case).  Kept in sync
+ * by hid_send_held(); reset by hid_release_all(). */
+static uint8_t g_host_mod = 0;
+
 static void hid_send_one(const keyboard_report_t *src) {
     keyboard_report_t r = *src;
 
@@ -364,6 +372,7 @@ static void hid_send_held(uint8_t extra_mod, uint8_t extra_key) {
     if (r.modifier && r.keys[0] == 0) g_allow_bare_modifier = true;
     hid_send_one(&r);
     g_allow_bare_modifier = prev;
+    g_host_mod = r.modifier;            /* track what the host now holds */
 }
 
 /* Release EVERYTHING: clears the held set and sends an all-zero report.  Used at
@@ -371,6 +380,7 @@ static void hid_send_held(uint8_t extra_mod, uint8_t extra_key) {
 static inline void hid_release_all(void) {
     memset(g_held_keys, 0, sizeof(g_held_keys));
     g_held_mods = 0;
+    g_host_mod  = 0;
     keyboard_report_t z;
     memset(&z, 0, sizeof(z));
     hid_send_one(&z);
@@ -424,6 +434,7 @@ static void hid_scrub(int n) {
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
 #define TYPE_HOLD_MS          4    /* steady-state per-key hold + gap            */
+#define MOD_SETTLE_MS         5    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      64   /* first N keys: slowest                      */
 #define WARMUP_SLOW_EXTRA_MS  14   /* ...held TYPE_HOLD_MS + this  (~36 ms/char) */
 #define WARMUP_RAMP_KEYS      130  /* up to N keys: medium                       */
@@ -500,20 +511,22 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
         hold += rand_range(0, jitter_max);
 
     usb_msc_set_budget(0);
-    /* Modifier-first: for a shifted/AltGr key, press the MODIFIER in its own
-     * report and let it settle before adding the keycode.  On German (and any
-     * layout with many shifted/AltGr symbols) the old single-report press let
-     * the host sample the key mid-modifier-transition, so the modifier bled onto
-     * the neighbouring keystroke — '(' typed as '8' (Shift lost) while the next
-     * key gained a stray Shift.  Pressing the modifier first, exactly as a human
-     * does, pins it to THIS key. */
-    if (modifier) {
-        hid_send_held(modifier, 0);
-        settle(2);
+    /* Modifier state machine.  Establish the wanted modifier (Shift/AltGr, plus
+     * any HOLD) in ITS OWN report and let it settle, but ONLY when it actually
+     * changes — then keep it held across a run of same-modifier keys, pulsing
+     * just the keycode.  A real keyboard holds Shift down for "ABC"; the old
+     * per-key press/release toggled the modifier every character, and on German
+     * (constant symbol/case switching) the host sampled keys mid-transition, so
+     * the modifier bled onto neighbours ('(' -> '8', a stray Shift on the next
+     * key, AltGr dropped). */
+    uint8_t want = (uint8_t)(g_held_mods | modifier);
+    if (want != g_host_mod) {
+        hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
+        settle(MOD_SETTLE_MS);
     }
-    hid_send_held(modifier, keycode);   /* press typed key ON TOP of any held keys */
+    hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
     settle(hold);
-    hid_send_held(0, 0);                /* release just the typed key; holds persist */
+    hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
     settle(hold);
     usb_msc_set_budget(0);
