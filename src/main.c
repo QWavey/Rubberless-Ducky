@@ -453,8 +453,12 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS          8    /* steady-state per-key hold + gap (reliable value) */
-#define MOD_SETTLE_MS        12    /* settle after a Shift/AltGr change before the key */
+#define TYPE_HOLD_MS         16    /* steady-state per-key hold + gap.  Reports are all
+                                     * DELIVERED (TXFAIL=0); the residual drops are the
+                                     * Windows input stack missing a keydown when the
+                                     * key is not held across enough of its ~poll window.
+                                     * Holding each key longer fixes that host-side. */
+#define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      24   /* first N keys: slowest (was 64 — trimmed for a
                                      * quicker start, still enough to seat the host
                                      * input stack on the opening STRING)         */
