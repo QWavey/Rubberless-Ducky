@@ -478,6 +478,13 @@ static void settle(uint32_t ms) {
 static uint16_t rand_range(uint16_t lo, uint16_t hi);   /* fwd: defined with the var-store below */
 
 static inline void send_key(uint8_t modifier, uint8_t keycode) {
+    /* AltGr fix.  Windows produces AltGr characters (German [ ] { } @ \ | ~ ...)
+     * from LeftCtrl+RightAlt, NOT RightAlt alone — but keymaps (de.json, etc.)
+     * encode AltGr as RightAlt (0x40).  Sending RightAlt alone made the host
+     * drop the modifier and type the bare key ('[' -> '8').  Add the LeftCtrl
+     * the OS expects whenever RightAlt is present. */
+    if (modifier & MOD_RALT) modifier |= MOD_LCTRL;
+
     /* Latch "mount finished" (kept only for the storage-budget calls below;
      * with the forced HID-only profile there is no host drive, so this has no
      * effect on typing). */
