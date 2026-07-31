@@ -22,6 +22,10 @@ STRINGLN   Check each [n]: expect vs what was typed
 STRINGLN =============================================
 ENTER
 
+REM Step variable. This compiler rejects a raw number as an operand
+REM inside an expression, so increments use a variable: ($i + $one).
+VAR $one = 1
+
 REM ---- [1] STRING + named keys (TAB, ENTER) ----
 STRING [1] STRING/TAB/ENTER (expect A then tab then B):
 STRING A
@@ -34,12 +38,12 @@ VAR $x = 2
 VAR $y = 3
 VAR $n = 0
 $n = ($x * $y)
-$n = ($n + 1)
+$n = ($n + $one)
 VAR $i = 0
 STRING [2] MATH 2*3+1 (expect 7 stars):
 WHILE ($i < $n)
     STRING *
-    $i = ($i + 1)
+    $i = ($i + $one)
 END_WHILE
 ENTER
 
@@ -50,7 +54,7 @@ VAR $j = 0
 STRING [3] LITERAL 5 (expect 5 hashes):
 WHILE ($j < $five)
     STRING #
-    $j = ($j + 1)
+    $j = ($j + $one)
 END_WHILE
 ENTER
 
@@ -75,7 +79,7 @@ VAR $k = 0
 STRING [4c] 10-3 subtract (expect 7 dots):
 WHILE ($k < $d)
     STRING .
-    $k = ($k + 1)
+    $k = ($k + $one)
 END_WHILE
 ENTER
 
