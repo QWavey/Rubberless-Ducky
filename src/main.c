@@ -457,9 +457,9 @@ static void hid_scrub(int n) {
                                      * value proven drop-free on hardware — the Windows
                                      * input stack needs the keydown present this long to
                                      * catch it.  This one must NOT be cut. */
-#define KEY_GAP_MS            3    /* inter-key gap (release->next press).  The host does
-                                     * NOT need this to be long, so it stays short to keep
-                                     * typing fast — only the hold above matters. */
+#define KEY_GAP_MS            8    /* inter-key gap (release->next press).  Matters far
+                                     * less than the hold, but 3 ms let a rare drop back
+                                     * in; 8 ms is drop-safe with margin and still fast. */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      8    /* first N keys: slowest.  With a reliable 16 ms base
                                      * hold the opening no longer needs a long ramp, so
