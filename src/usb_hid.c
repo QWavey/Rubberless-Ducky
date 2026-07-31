@@ -427,15 +427,12 @@ static void configure_hid_endpoints(void)
         AVR32_USBB.uecfg1 = (3 << AVR32_USBB_UECFG1_EPTYPE_OFFSET)  /* Interrupt */
                            | (1 << AVR32_USBB_UECFG1_EPDIR_OFFSET)   /* IN */
                            | (3 << AVR32_USBB_UECFG1_EPSIZE_OFFSET)  /* 64 bytes */
-                           | (0 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* SINGLE bank */
+                           | (1 << AVR32_USBB_UECFG1_EPBK_OFFSET)    /* DOUBLE bank */
                            | AVR32_USBB_UECFG1_ALLOC_MASK;
-        /* SINGLE bank (was double).  With two banks the "bank free" (TXINI) test
-         * passes for the second bank while the first still holds an UNREAD report,
-         * so a press and its release could both be queued and the host's input
-         * stack coalesced/dropped them (the 'fixed'->'ixed' drops).  One bank
-         * forces the host to poll each report out before the next is written —
-         * fully serialized and drop-proof, exactly as the reliable ATmega/Arduino
-         * HID keyboards (e.g. wifiduck) do it. */
+        /* DOUBLE bank.  (A single-bank experiment — matching Arduino/wifiduck —
+         * corrupted the first line on this USBB: the FIFO got written while the
+         * lone bank was still busy, injecting stray keys.  The double bank + the
+         * NBUSYBK drain wait in hid_send_one() is the reliable path here.) */
         
 
         while (!(AVR32_USBB.uesta1 & AVR32_USBB_UESTA1_CFGOK_MASK));

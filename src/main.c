@@ -433,15 +433,14 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS          6    /* steady-state per-key hold + gap.  Single-bank
-                                     * EP now self-throttles each report, so this
-                                     * can be tighter than the 8 used while drops
-                                     * were being chased.                         */
-#define MOD_SETTLE_MS        10    /* settle after a Shift/AltGr change before the key */
-#define WARMUP_SLOW_KEYS      12   /* first N keys: slowest (was 64 — too slow to start) */
-#define WARMUP_SLOW_EXTRA_MS  10   /* ...held TYPE_HOLD_MS + this                 */
-#define WARMUP_RAMP_KEYS      32   /* up to N keys: medium (was 130)              */
-#define WARMUP_RAMP_EXTRA_MS  4    /* ...held TYPE_HOLD_MS + this                 */
+#define TYPE_HOLD_MS          8    /* steady-state per-key hold + gap (reliable value) */
+#define MOD_SETTLE_MS        12    /* settle after a Shift/AltGr change before the key */
+#define WARMUP_SLOW_KEYS      24   /* first N keys: slowest (was 64 — trimmed for a
+                                     * quicker start, still enough to seat the host
+                                     * input stack on the opening STRING)         */
+#define WARMUP_SLOW_EXTRA_MS  12   /* ...held TYPE_HOLD_MS + this                 */
+#define WARMUP_RAMP_KEYS      56   /* up to N keys: medium (was 130)              */
+#define WARMUP_RAMP_EXTRA_MS  6    /* ...held TYPE_HOLD_MS + this                 */
 /* ========================================================================== */
 
 static uint16_t char_settle_ms = TYPE_HOLD_MS;
