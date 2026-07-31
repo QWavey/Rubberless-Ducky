@@ -1,0 +1,20 @@
+﻿PROJECT BACKUP
+==============
+Project name : BACKUP
+Backed up at : 2026-07-31 01:43:06  [W. Europe Standard Time]
+Source path  : C:\Users\flori\Downloads\proccecece\BACKUP
+Backup path  : C:\Users\flori\Downloads\proccecece\backups\BACKUP_2026-07-31_01-43-03
+
+Machine      : FLO_LAPTOP
+User         : flori
+OS           : Microsoft Windows NT 10.0.26200.0
+
+Files copied : 1108
+Total size   : 41.19 MB
+
+Git
+---
+Branch      : version-5
+Last commit : 14a1f12  Create version-5 branch with latest code  (2026-06-17 11:29:11 +0200)
+Working tree: dirty (uncommitted changes present)
+
