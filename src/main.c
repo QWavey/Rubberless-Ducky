@@ -445,11 +445,11 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS         16    /* KEY-HELD duration (press->release).  16 ms is the
+#define TYPE_HOLD_MS         12    /* KEY-HELD duration (press->release).  16 ms is the
                                      * value proven drop-free on hardware — the Windows
                                      * input stack needs the keydown present this long to
                                      * catch it.  This one must NOT be cut. */
-#define KEY_GAP_MS            8    /* inter-key gap (release->next press).  Matters far
+#define KEY_GAP_MS            6    /* inter-key gap (release->next press).  Matters far
                                      * less than the hold, but 3 ms let a rare drop back
                                      * in; 8 ms is drop-safe with margin and still fast. */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
