@@ -264,6 +264,16 @@ static bool g_allow_bare_modifier = false;
  * KEY_DOWN).  Set when 0xe6e9 is seen; consumed by the very next word. */
 static bool inject_mod_pending = false;
 
+/* Held-key state for HOLD/RELEASE (KEY_DOWN/KEY_UP).  DuckyScript can hold
+ * several keys/modifiers at once (documented "Holding Multiple Keys"), and
+ * RELEASE lets go of ONE named key while the others stay down.  We track the
+ * held set here and rebuild the full 6-key report on every HOLD/RELEASE and on
+ * every typed keystroke, so (a) a second HOLD no longer evicts the first, (b)
+ * RELEASE frees only its own key, and (c) keys typed while something is held
+ * carry the held modifiers/keys instead of clobbering them. */
+static uint8_t g_held_keys[6] = {0};
+static uint8_t g_held_mods    = 0;
+
 static void hid_send_one(const keyboard_report_t *src) {
     keyboard_report_t r = *src;
 
@@ -336,10 +346,50 @@ static inline void hid_send_report(uint8_t modifier, uint8_t keycode) {
     hid_send_one(&r);
 }
 
+/* Send the current held-key set, optionally with ONE extra momentary key/mod
+ * OR'd in (used by send_key() so a typed key rides on top of whatever HOLD is
+ * active).  Rebuilds the full report from g_held_keys/g_held_mods every time. */
+static void hid_send_held(uint8_t extra_mod, uint8_t extra_key) {
+    keyboard_report_t r;
+    memset(&r, 0, sizeof(r));
+    r.modifier = (uint8_t)(g_held_mods | extra_mod);
+    uint8_t ki = 0;
+    for (uint8_t i = 0; i < 6; i++)
+        if (g_held_keys[i] && ki < 6) r.keys[ki++] = g_held_keys[i];
+    if (extra_key && ki < 6) r.keys[ki++] = extra_key;
+    /* A report carrying modifiers but no keycode is a legitimate held bare
+     * modifier here (e.g. INJECT_MOD + HOLD CONTROL); let it past the
+     * bare-modifier scrub in hid_send_one(). */
+    bool prev = g_allow_bare_modifier;
+    if (r.modifier && r.keys[0] == 0) g_allow_bare_modifier = true;
+    hid_send_one(&r);
+    g_allow_bare_modifier = prev;
+}
+
+/* Release EVERYTHING: clears the held set and sends an all-zero report.  Used at
+ * boot/button scrubs, RESET, STOP_PAYLOAD and payload end. */
 static inline void hid_release_all(void) {
+    memset(g_held_keys, 0, sizeof(g_held_keys));
+    g_held_mods = 0;
     keyboard_report_t z;
     memset(&z, 0, sizeof(z));
     hid_send_one(&z);
+}
+
+/* Add/remove one key+modifier to/from the held set (HOLD / RELEASE). */
+static void hid_hold_key(uint8_t modifier, uint8_t keycode) {
+    g_held_mods |= modifier;
+    if (keycode) {
+        for (uint8_t i = 0; i < 6; i++) if (g_held_keys[i] == keycode) return; /* already held */
+        for (uint8_t i = 0; i < 6; i++) if (!g_held_keys[i]) { g_held_keys[i] = keycode; break; }
+    }
+    hid_send_held(0, 0);
+}
+static void hid_release_key(uint8_t modifier, uint8_t keycode) {
+    g_held_mods &= (uint8_t)~modifier;
+    if (keycode)
+        for (uint8_t i = 0; i < 6; i++) if (g_held_keys[i] == keycode) g_held_keys[i] = 0;
+    hid_send_held(0, 0);
 }
 
 /* Hard scrub: N back-to-back release-all reports.  Used at payload start
@@ -450,9 +500,9 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
         hold += rand_range(0, jitter_max);
 
     usb_msc_set_budget(0);
-    hid_send_report(modifier, keycode);
+    hid_send_held(modifier, keycode);   /* press typed key ON TOP of any held keys */
     settle(hold);
-    hid_release_all();
+    hid_send_held(0, 0);                /* release just the typed key; holds persist */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
     settle(hold);
     usb_msc_set_budget(0);
@@ -527,6 +577,17 @@ static void wait_for_host_polling(void) {
  * Printable-ASCII → HID keycode (used by INJECT_VAR opcodes for non-
  * literal characters; the bulk of typing goes through raw key bytes
  * in the bytecode default-case).
+ *
+ * LAYOUT NOTE (known limitation): this table is fixed US-QWERTY.  STRING text
+ * is unaffected — the compiler pre-encodes it against the selected keymap, so
+ * German/etc. STRINGs type correctly.  But RANDOM_LETTER / RANDOM_CHAR /
+ * RANDOM_SPECIAL are generated on-device at runtime and routed through here, so
+ * on a non-US host they mis-map: e.g. on German QWERTZ a random 'y' sends
+ * keycode 0x1c and the host types 'z' (Y/Z swapped), and RANDOM_SPECIAL emits
+ * US shift-symbols ('@','#',...) that differ on other layouts.  There is no
+ * on-device fix — the firmware cannot know the host's active layout — so a
+ * payload needing layout-correct random characters should generate them with a
+ * RANDOM_* value + its own keymap logic rather than the built-in generators.
  * ====================================================================== */
 typedef struct { uint8_t keycode, modifier; } KeyEntry;
 
@@ -1238,6 +1299,15 @@ int main(void)
             continue;
         }
         if (word == 0xefef) {                 /* IF */
+            /* The false-branch scan below (and the BUTTON_DEF scan) matches the
+             * terminator by raw word value + block id, walking word-by-word
+             * rather than by instruction length.  This is safe for well-formed
+             * compiled payloads: a keystroke word can never collide with the
+             * END_IF opcode 0x1ff4 (that would require modifier byte 0xf4, which
+             * char_to_hid/the compiler never emit — real keystroke modifiers are
+             * single bits), so 0x1ff4 only ever appears as an actual END_IF.  A
+             * hand-crafted/corrupt stream could defeat this; a full instruction
+             * walk would be needed to make it bullet-proof. */
             uint16_t cond = get_word(pc+1);
             uint16_t bid  = get_word(pc+2);
             if (!read_var(cond)) {
@@ -1290,15 +1360,14 @@ int main(void)
             usb_msc_set_suppressed(false);
             pc++; continue;
         }
-        if (word == 0xfff8) {                          /* KEY_DOWN (intentional hold) */
+        if (word == 0xfff8) {                          /* KEY_DOWN (HOLD) */
             uint16_t k = get_word(pc+1);
-            g_allow_bare_modifier = true;   /* allow holding a bare modifier */
-            hid_send_report((uint8_t)(k & 0xFF), (uint8_t)(k >> 8));
-            g_allow_bare_modifier = false;
+            hid_hold_key((uint8_t)(k & 0xFF), (uint8_t)(k >> 8));  /* add to held set */
             pc += 2; continue;
         }
-        if (word == 0xeee8) {                          /* KEY_UP */
-            hid_release_all();
+        if (word == 0xeee8) {                          /* KEY_UP (RELEASE <key>) */
+            uint16_t k = get_word(pc+1);
+            hid_release_key((uint8_t)(k & 0xFF), (uint8_t)(k >> 8)); /* free only this key */
             pc += 2; continue;
         }
         if (word == 0xeaee) {                          /* BUTTON_DEF — skip body */

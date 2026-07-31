@@ -21,6 +21,29 @@ this silently broke **all conditionals and loops** too. Simple copies
 Fixed: `s2 = word[pc+3]`, `op = word[pc+4]`; the 4th word being 0 still
 disambiguates a plain copy. Verified against tests/13.bin.
 
+## Bug-hunt fixes (HOLD/RELEASE + notes)
+- **Multi-key HOLD (was broken) — FIXED.** `hid_send_report` built a fresh
+  single-key report each call, so a second `HOLD` evicted the first and holding
+  a modifier while pressing a key dropped the modifier. Added a held-key set
+  (`g_held_keys[6]` + `g_held_mods`); HOLD adds to it, and every HOLD/typed key
+  rebuilds the full 6-key report. The documented "Holding Multiple Keys" pattern
+  now works, and keys typed while a HOLD is active carry the held state.
+- **RELEASE freed ALL keys (was broken) — FIXED.** `KEY_UP` called
+  `hid_release_all()` and ignored its key argument, so `RELEASE a` dropped every
+  held key. Now removes only the named key/modifier from the held set.
+  `hid_release_all()` (RESET / STOP / boot & button scrubs) still clears the
+  whole set, which is the intended "release everything" semantics.
+- **RANDOM_* on non-US hosts (known limitation, documented).** `RANDOM_LETTER/
+  CHAR/SPECIAL` are generated on-device via a US-QWERTY `char_to_hid`, so on a
+  German (etc.) host they mis-map (Y/Z swap, wrong shift-symbols). No on-device
+  fix is possible — the firmware can't know the host layout. STRING is
+  unaffected (compiler pre-encodes it). See the note at `char_to_hid`.
+- **Block-terminator scan (theoretical only, documented).** IF/BUTTON_DEF locate
+  their END marker by raw word value + block id. A keystroke word can't collide
+  with `0x1ff4`/`0xebf4` (needs modifier byte 0xf4, which the compiler never
+  emits), so valid payloads are safe; only a corrupt/hand-crafted stream could
+  defeat it. Noted at the IF handler.
+
 ## Covered ✅
 
 | Area | Commands |
