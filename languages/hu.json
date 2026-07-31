@@ -92,6 +92,7 @@
     "PAGEUP":"00,00,4b",
     "DEL":"00,00,4c",
     "DELETE":"00,00,4c",
+    "BACKSPACE":"00,00,2a",
     "END":"00,00,4d",
     "PAGEDOWN":"00,00,4e",
     "RIGHT":"00,00,4f",
