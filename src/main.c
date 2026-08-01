@@ -457,13 +457,6 @@ static void hid_scrub(int n) {
                                      * host room to process the key-up before the next
                                      * key-down (short gaps let rare drops back in). */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
-#define BURST_MAX             4    /* Safe-Burst: max keys accumulated per burst.  This
-                                     * host delivered only ~4 of a 6-key rollover, so 4 is
-                                     * the ceiling that never drops the tail. */
-#define BURST_STEP_MS         8    /* gap between adding successive keys in a burst.  Each
-                                     * key stays held (present in every later report) until
-                                     * the burst releases, so a short step still gives it a
-                                     * long, robust hold; the LAST key gets the full hold. */
 #define WARMUP_SLOW_KEYS      56   /* first N keys: slowest.  The host's INPUT stack (above
                                      * USB polling) lags for a beat after enumeration, so
                                      * the very first STRING outruns it and drops characters
@@ -570,68 +563,6 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
     hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
     settle(KEY_GAP_MS);                 /* short inter-key gap (host doesn't need long) */
-    usb_msc_set_budget(0);
-}
-
-/* ======================================================================
- * Safe-Burst typing.
- *
- * Runs of UNMODIFIED printable keys (mod == 0: lowercase, digits, space —
- * the bulk of real text) are accumulated up to BURST_MAX and typed as one
- * overlapping burst: [a] -> [a,b] -> [a,b,c] -> [a,b,c,d] -> release.  Each
- * key's keydown fires when it first appears and it stays held until the
- * burst releases, so every key gets a long, drop-safe hold while the holds
- * OVERLAP — 2-4 characters type in roughly the time one used to.  The LAST
- * key is the only one held for the full char_settle_ms on its own.
- *
- * DELIBERATELY limited to avoid the two ways full rollover broke on this
- * host: (1) NO modifiers in a burst — any Shift/AltGr key goes single-key,
- * so a modifier can never be mis-applied across a burst; (2) capped at
- * BURST_MAX (=4) so the host never drops the tail of a long rollover.
- * ====================================================================== */
-static uint8_t g_burst_keys[BURST_MAX];
-static uint8_t g_burst_n = 0;
-
-/* Does this word extend the current burst?  Must be an UNMODIFIED LETTER
- * (keycode 0x04..0x1d = a..z), not already in the burst, with room left.
- * Letters only: bursts that spanned a space/digit dropped the letter right
- * after the space (fragile mid-burst transition); pure letter runs are clean.
- * Space, digits and punctuation therefore go single-key. */
-static bool burst_extends(uint16_t w) {
-    if ((uint8_t)(w & 0xFF) != 0) return false;      /* has a modifier */
-    uint8_t kc = (uint8_t)(w >> 8);
-    if (kc < 0x04 || kc > 0x1d) return false;        /* not a-z */
-    if (g_burst_n >= BURST_MAX) return false;
-    for (uint8_t i = 0; i < g_burst_n; i++) if (g_burst_keys[i] == kc) return false;
-    return true;
-}
-
-static void flush_burst(void) {
-    if (g_burst_n == 0) return;
-    uint8_t n = g_burst_n;
-    g_burst_n = 0;                       /* clear early: re-entrancy safety */
-
-    usb_msc_set_budget(0);
-    /* Drop any modifier still held from a prior shifted key before an
-     * unmodified burst (keeps HOLD keys/mods, only clears a stale Shift/AltGr). */
-    if (g_host_mod != g_held_mods) { hid_send_held(0, 0); settle(MOD_SETTLE_MS); }
-
-    for (uint8_t i = 0; i < n; i++) {
-        keyboard_report_t r;
-        memset(&r, 0, sizeof(r));
-        r.modifier = g_held_mods;        /* no typed modifier — burst is mod-0 */
-        uint8_t ki = 0;
-        for (uint8_t h = 0; h < 6 && ki < 6; h++)
-            if (g_held_keys[h]) r.keys[ki++] = g_held_keys[h];
-        for (uint8_t j = 0; j <= i && ki < 6; j++) r.keys[ki++] = g_burst_keys[j];
-        hid_send_one(&r);
-        g_host_mod = g_held_mods;
-        settle(i + 1u < n ? (uint32_t)BURST_STEP_MS : (uint32_t)char_settle_ms);
-        if (g_keys_typed != 0xFFFF) g_keys_typed++;
-    }
-    hid_send_held(0, 0);                 /* release burst keys (keep HOLD state) */
-    usb_msc_set_budget(g_mount_done ? 1 : -1);
-    settle(KEY_GAP_MS);
     usb_msc_set_budget(0);
 }
 
@@ -1356,21 +1287,12 @@ int main(void)
         /* Re-arm the implicit trigger once the button is physically released. */
         if (gpio_read(BTN_PORT, BTN_PIN)) button_impl_armed = true;
 
-        uint16_t word = get_word(pc);
-
-        /* Safe-Burst: emit any accumulated unmodified keystrokes before THIS word
-         * unless it extends the burst (another unmodified, non-repeat printable
-         * key with room).  So the burst is always flushed before any opcode,
-         * delay, jump, button, or MODIFIED key. */
-        if (g_burst_n && !burst_extends(word)) flush_burst();
-
         /* Implicit button → BUTTON_DEF jump (only if the payload has a
          * BUTTON_DEF block, we're not already inside one, and the trigger is
          * armed = the button was released since the last time it fired). */
         if (button_impl_armed && !gpio_read(BTN_PORT, BTN_PIN)
             && button_enabled && !in_button_handler && button_def_pc != 0)
         {
-            flush_burst();                 /* emit any pending keys before diverting */
             button_push_received = 1;
             if (call_stack_ptr < 32) {
                 button_impl_armed       = false;  /* one shot until released */
@@ -1380,6 +1302,8 @@ int main(void)
                 continue;
             }
         }
+
+        uint16_t word = get_word(pc);
 
         /* INJECT_MOD prefix consumed here.  The NEXT word is a bare-modifier
          * action:  a keycode-0 modifier word => a modifier TAP (press+release);
@@ -1684,25 +1608,14 @@ int main(void)
                  * value word that drifted into the default case, and sending it
                  * is exactly what produced stray characters and rogue modifier
                  * combos.  Treat those as a NOP instead of injecting garbage. */
-                if (keycode >= 0x04 && keycode <= 0x65) {
-                    if (modifier == 0 && keycode <= 0x1d) {
-                        /* Unmodified LETTER: accumulate into the Safe-Burst.  The
-                         * loop-top already flushed if it couldn't extend, so it fits. */
-                        g_burst_keys[g_burst_n++] = keycode;
-                    } else {
-                        /* Digit / space / punctuation / any modified key: reliable
-                         * single-key path (no fragile mid-burst transition, and a
-                         * modifier is never risked inside a burst). */
-                        send_key(modifier, keycode);
-                    }
-                }
+                if (keycode >= 0x04 && keycode <= 0x65)
+                    send_key(modifier, keycode);
                 break;
             }
         }
         pc++;
     }
 
-    flush_burst();                 /* emit any keystrokes still pending in the burst */
     g_payload_run = false;
     exfil_flush();                 /* commit any buffered EXFIL loot to LOOT.BIN */
     led_green();
