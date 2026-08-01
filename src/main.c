@@ -1192,6 +1192,9 @@ static bool cfg_key_is(const char *line, const char *key, const char **valp) {
     *valp = &line[i];
     return true;
 }
+static uint16_t clamp_u16(uint16_t v, uint16_t lo, uint16_t hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
 static uint32_t cfg_parse_val(const char *s) {
     uint32_t v = 0;
     if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
@@ -1242,6 +1245,22 @@ static void load_config(void) {
         }
         i = j + 1;
     }
+
+    /* Clamp to safe ranges so a CONFIG.TXT typo can't brick the device: hold_ms=0
+     * would drop every keystroke (0 ms hold), and jitter_max=50000 would hold each
+     * key ~50 s.  Flags are normalised to 0/1.  VID/PID span the full 16 bits, so
+     * they're left unclamped. */
+    char_settle_ms        = clamp_u16(char_settle_ms,        1, 200);
+    cfg_key_gap_ms        = clamp_u16(cfg_key_gap_ms,        0, 200);
+    cfg_mod_settle_ms     = clamp_u16(cfg_mod_settle_ms,     0, 200);
+    cfg_warmup_slow_keys  = clamp_u16(cfg_warmup_slow_keys,  0, 2000);
+    cfg_warmup_slow_extra = clamp_u16(cfg_warmup_slow_extra, 0, 200);
+    cfg_warmup_ramp_keys  = clamp_u16(cfg_warmup_ramp_keys,  0, 2000);
+    cfg_warmup_ramp_extra = clamp_u16(cfg_warmup_ramp_extra, 0, 200);
+    jitter_max            = clamp_u16(jitter_max,            0, 1000);
+    jitter_enabled        = jitter_enabled ? 1 : 0;
+    cfg_autocal           = cfg_autocal    ? 1 : 0;
+    cfg_dryrun            = cfg_dryrun      ? 1 : 0;
 }
 
 /* Boot-time payload selection.  If the button is NOT held at power-on, use

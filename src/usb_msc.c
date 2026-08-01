@@ -298,6 +298,20 @@ static void dispatch_scsi(void) {
                        | ((uint32_t)bot.CBWCB[4] << 8)
                        | bot.CBWCB[5];
             bot.io_blocks_left = (uint16_t)(((uint16_t)bot.CBWCB[7] << 8) | bot.CBWCB[8]);
+            /* Bounds-check against the advertised capacity (SCSI LBA-out-of-range).
+             * Without it an out-of-range read pulls garbage sector-by-sector.
+             * Overflow-safe form; permissive only when capacity is unknown
+             * (disk==0), which matches the READ_CAPACITY fallback. */
+            {
+                uint32_t disk = mc_partition_sectors > 0 ? mc_partition_sectors : mc_total_sectors;
+                if (disk > 0 && (bot.io_lba >= disk || bot.io_blocks_left > disk - bot.io_lba)) {
+                    if (bot.dCBWDataTransferLength > 0) ep3_stall();   /* IN data stage */
+                    bot.csw_status   = 1;
+                    bot.data_residue = bot.dCBWDataTransferLength;
+                    bot.state        = BOT_STATE_CSW;
+                    return;
+                }
+            }
             bot.buffer_loaded = 0;
             bot.buffer_offset = 0;
             bot.data_residue  = bot.dCBWDataTransferLength;
@@ -312,6 +326,20 @@ static void dispatch_scsi(void) {
                        | ((uint32_t)bot.CBWCB[4] << 8)
                        | bot.CBWCB[5];
             bot.io_blocks_left = (uint16_t)(((uint16_t)bot.CBWCB[7] << 8) | bot.CBWCB[8]);
+            /* Bounds-check BEFORE any sd_write_sector: a write past the advertised
+             * volume would corrupt a physical sector outside it (e.g. beyond the
+             * partition).  Reject as LBA-out-of-range instead. Permissive only
+             * when capacity is unknown (disk==0). */
+            {
+                uint32_t disk = mc_partition_sectors > 0 ? mc_partition_sectors : mc_total_sectors;
+                if (disk > 0 && (bot.io_lba >= disk || bot.io_blocks_left > disk - bot.io_lba)) {
+                    if (bot.dCBWDataTransferLength > 0) ep2_stall();   /* OUT data stage */
+                    bot.csw_status   = 1;
+                    bot.data_residue = bot.dCBWDataTransferLength;
+                    bot.state        = BOT_STATE_CSW;
+                    return;
+                }
+            }
             bot.buffer_offset = 0;
             bot.data_residue  = bot.dCBWDataTransferLength;
             bot.csw_status    = 0;
