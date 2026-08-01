@@ -605,13 +605,16 @@ static bool is_typing_word(uint16_t w) {
     }
 }
 
-/* Does this word extend the current burst?  Must be an UNMODIFIED printable
- * key, not already in the burst, with room left. */
+/* Does this word extend the current burst?  Must be an UNMODIFIED LETTER
+ * (keycode 0x04..0x1d = a..z), not already in the burst, with room left.
+ * Letters only: bursts that spanned a space/digit dropped the letter right
+ * after the space (fragile mid-burst transition); pure letter runs are clean.
+ * Space, digits and punctuation therefore go single-key. */
 static bool burst_extends(uint16_t w) {
     if ((uint8_t)(w & 0xFF) != 0) return false;      /* has a modifier */
-    if (!is_typing_word(w)) return false;
-    if (g_burst_n >= BURST_MAX) return false;
     uint8_t kc = (uint8_t)(w >> 8);
+    if (kc < 0x04 || kc > 0x1d) return false;        /* not a-z */
+    if (g_burst_n >= BURST_MAX) return false;
     for (uint8_t i = 0; i < g_burst_n; i++) if (g_burst_keys[i] == kc) return false;
     return true;
 }
@@ -1695,14 +1698,14 @@ int main(void)
                  * is exactly what produced stray characters and rogue modifier
                  * combos.  Treat those as a NOP instead of injecting garbage. */
                 if (keycode >= 0x04 && keycode <= 0x65) {
-                    if (modifier == 0) {
-                        /* Unmodified: accumulate into the Safe-Burst.  The loop-top
-                         * already flushed if this key couldn't extend, so here it
-                         * always fits. */
+                    if (modifier == 0 && keycode <= 0x1d) {
+                        /* Unmodified LETTER: accumulate into the Safe-Burst.  The
+                         * loop-top already flushed if it couldn't extend, so it fits. */
                         g_burst_keys[g_burst_n++] = keycode;
                     } else {
-                        /* Modified (Shift/AltGr/…): reliable single-key path — a
-                         * modifier is never risked inside a burst. */
+                        /* Digit / space / punctuation / any modified key: reliable
+                         * single-key path (no fragile mid-burst transition, and a
+                         * modifier is never risked inside a burst). */
                         send_key(modifier, keycode);
                     }
                 }
