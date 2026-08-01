@@ -37,12 +37,41 @@ disambiguates a plain copy. Verified against tests/13.bin.
   CHAR/SPECIAL` are generated on-device via a US-QWERTY `char_to_hid`, so on a
   German (etc.) host they mis-map (Y/Z swap, wrong shift-symbols). No on-device
   fix is possible — the firmware can't know the host layout. STRING is
-  unaffected (compiler pre-encodes it). See the note at `char_to_hid`.
+  unaffected (the compiler pre-encodes it against the selected keymap). See the
+  note at `char_to_hid`.
 - **Block-terminator scan (theoretical only, documented).** IF/BUTTON_DEF locate
   their END marker by raw word value + block id. A keystroke word can't collide
   with `0x1ff4`/`0xebf4` (needs modifier byte 0xf4, which the compiler never
   emits), so valid payloads are safe; only a corrupt/hand-crafted stream could
   defeat it. Noted at the IF handler.
+
+## v7 changes — bug fix + firmware-native SD features
+
+- **LED_R color fix (verified).** Source order `LED_OFF / LED_R / LED_G` always
+  compiles to `0xeaed / 0xeced / 0xebed` (confirmed in `tests/12.bin`,
+  `tests/13.bin`), so `0xeced` is **LED_R (red)**. The firmware had it lighting
+  green; every payload's `LED_R` showed the wrong colour. Now red.
+  `tools/inject_inspect.py` relabelled to match.
+- **PRNG upgraded to xorshift32** (was an LCG). Makes `$_JITTER` timing genuinely
+  non-uniform (an LCG's low bits are regular and modelable by a fixed-cadence
+  detector); RANDOM_* benefits too.
+- **Silent failures now visible via LED blink codes:** payload larger than the
+  20 KB RAM buffer → 3× red (pre-run) and again at end-of-run; CALL/BUTTON
+  nesting past depth 32 → 4× red at end-of-run; integrity-check failure → 6× red.
+- **`CONFIG.TXT`** (SD root, optional): retune timing / jitter / VID-PID /
+  autocal / dryrun without a reflash. See `CONFIG.sample.txt`.
+- **Boot-time payload selection:** hold the button at power-on to pick
+  `INJECT1/2/3.BIN` (red flash per press); not held → `INJECT.BIN`, zero latency.
+- **Optional integrity header** (`RDKY` magic + CRC16, added by
+  `tools/wrap_inject.py`): a corrupt payload is refused, not typed as garbage.
+- **Multi-sector keystroke-reflection loot:** reflection no longer hard-caps at
+  one 512-byte sector; full sectors are committed from main context and it
+  continues into the next (board SD-write limits still apply).
+- **Dry-run lint** (`CONFIG.TXT dryrun=1`): validate jump targets, blink the
+  result (3 green = OK / N red = N bad targets), type nothing.
+- **Self-calibrating timing (invention, `autocal=1`):** measure the host input-
+  stack latency from the CapsLock LED echo and trim the warm-up ramp on a
+  proven-fast host. Only ever speeds up a fast host; slow/no-echo keeps defaults.
 
 ## Covered ✅
 

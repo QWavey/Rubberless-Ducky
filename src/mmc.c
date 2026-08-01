@@ -427,10 +427,13 @@ DRESULT sd_write_sector(DWORD sector, const BYTE *buff) {
         BYTE resp = rcv_spi();
         if ((resp & 0x1F) == 0x05) {
             UINT bc = 40000;
-            while (rcv_spi() == 0 && --bc);
+            while (rcv_spi() == 0 && --bc);   /* wait out the card's programming-busy (MISO held low) */
             DESELECT(); rcv_spi();
             cached_sector = 0xFFFFFFFF;
-            return RES_OK;
+            /* Don't claim success if the card never released busy (bc exhausted):
+             * the sector may not be committed, and reporting RES_OK would let the
+             * host believe a write landed that didn't. */
+            return bc ? RES_OK : RES_ERROR;
         }
     }
     DESELECT(); rcv_spi();

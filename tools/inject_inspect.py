@@ -58,10 +58,10 @@ OPCODES = {
     0xecee: "BUTTON_ENABLE",
     0xebf1: "STOP_PAYLOAD",
     0xeaed: "LED_OFF",
-    0xebed: "LED_GREEN",
-    0xeced: "LED_GREEN",
-    0xeeed: "LED_RED",
-    0xeffe: "LED_RED",
+    0xebed: "LED_G",     # green  (verified: source LED_OFF/LED_R/LED_G -> eaed/eced/ebed)
+    0xeced: "LED_R",     # red    (was mislabelled LED_GREEN)
+    0xeeed: "LED_RED",   # unverified alias
+    0xeffe: "LED_RED",   # unverified alias
     0xedee: "SYSLED_ON",
     0xeeee: "SYSLED_OFF",
     0xeaeb: "SAVE_HOST_LOCK_STATE",
