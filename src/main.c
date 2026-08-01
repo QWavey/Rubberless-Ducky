@@ -445,17 +445,17 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS         16    /* KEY-HELD duration (press->release) — the drop-critical
+#define TYPE_HOLD_MS         22    /* KEY-HELD duration (press->release) — the drop-critical
                                      * value: the Windows input stack needs the keydown
-                                     * present this long to reliably catch it.  Fully
-                                     * bisected on hardware: 8/10/13/14 ms ALL dropped a
-                                     * character in at least one run (12 got lucky once) —
-                                     * the sub-16 drop rate is low but RANDOM, never zero.
-                                     * 16 ms is the only value with repeated 100%-clean runs.
-                                     * Do NOT lower it; overlapping keys (rollover) would
-                                     * beat this but this USB host garbles rollover. */
-#define KEY_GAP_MS            8    /* inter-key gap (release->next press).  8 ms is the
-                                     * proven-clean value; 3-6 ms let rare drops back in. */
+                                     * present this long to catch it.  Bisected on hardware:
+                                     * 8/10/13/14 ms dropped often, 16 ms still leaked a rare
+                                     * RANDOM miss (~1 in 150).  22 ms adds margin above that
+                                     * random-residual band to push accuracy to 100%.  The
+                                     * only way to be both faster AND clean is overlapping
+                                     * keys (rollover), which this USB host garbles. */
+#define KEY_GAP_MS           10    /* inter-key gap (release->next press).  10 ms gives the
+                                     * host room to process the key-up before the next
+                                     * key-down (short gaps let rare drops back in). */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      56   /* first N keys: slowest.  The host's INPUT stack (above
                                      * USB polling) lags for a beat after enumeration, so
