@@ -592,19 +592,6 @@ static inline void send_key(uint8_t modifier, uint8_t keycode) {
 static uint8_t g_burst_keys[BURST_MAX];
 static uint8_t g_burst_n = 0;
 
-/* A plain printable keystroke word (the interpreter's default case), not one
- * of the few opcodes whose value lands in the 0x04..0x65 keycode range. */
-static bool is_typing_word(uint16_t w) {
-    uint8_t kc = (uint8_t)(w >> 8);
-    if (kc < 0x04 || kc > 0x65) return false;
-    switch (w) {
-        case 0x04ea: case 0x05ea: case 0x06ea: case 0x07ea:
-        case 0x08ea: case 0x09ea: case 0x04ed: case 0x1ff4: case 0x0fe8:
-            return false;
-        default: return true;
-    }
-}
-
 /* Does this word extend the current burst?  Must be an UNMODIFIED LETTER
  * (keycode 0x04..0x1d = a..z), not already in the burst, with room left.
  * Letters only: bursts that spanned a space/digit dropped the letter right
