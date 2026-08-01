@@ -457,12 +457,15 @@ static void hid_scrub(int n) {
 #define KEY_GAP_MS            8    /* inter-key gap (release->next press).  8 ms is the
                                      * proven-clean value; 3-6 ms let rare drops back in. */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
-#define WARMUP_SLOW_KEYS      8    /* first N keys: slowest.  With a reliable 16 ms base
-                                     * hold the opening no longer needs a long ramp, so
-                                     * this is short for a quick start.            */
-#define WARMUP_SLOW_EXTRA_MS  8    /* ...held TYPE_HOLD_MS + this                 */
-#define WARMUP_RAMP_KEYS      20   /* up to N keys: medium                        */
-#define WARMUP_RAMP_EXTRA_MS  4    /* ...held TYPE_HOLD_MS + this                 */
+#define WARMUP_SLOW_KEYS      56   /* first N keys: slowest.  The host's INPUT stack (above
+                                     * USB polling) lags for a beat after enumeration, so
+                                     * the very first STRING outruns it and drops characters
+                                     * (was cut to 8 during the speed push -> line-1 label
+                                     * lost ~8 chars).  Cover the whole opening line.  This
+                                     * is a ONE-TIME startup cost; steady-state is unchanged. */
+#define WARMUP_SLOW_EXTRA_MS  14   /* ...held TYPE_HOLD_MS + this (~30 ms/char while warming) */
+#define WARMUP_RAMP_KEYS      120  /* up to N keys: medium, then ramp to full speed */
+#define WARMUP_RAMP_EXTRA_MS  6    /* ...held TYPE_HOLD_MS + this                 */
 /* ========================================================================== */
 
 static uint16_t char_settle_ms = TYPE_HOLD_MS;
