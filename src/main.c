@@ -445,14 +445,17 @@ static void hid_scrub(int n) {
  * down to steady state — see the warm-up ramp in send_key().  Units: ms, and
  * keystroke counts since boot.  Raise the EXTRA/KEYS values if a slow host
  * still drops characters on the first pass; lower them for faster typing. */
-#define TYPE_HOLD_MS         13    /* KEY-HELD duration (press->release) — the drop-critical
+#define TYPE_HOLD_MS         14    /* KEY-HELD duration (press->release) — the drop-critical
                                      * value: the Windows input stack needs the keydown
                                      * present this long to catch it.  Bisected on hardware:
-                                     * 8 & 10 ms DROP, 12 ms is clean; 13 sits one notch
-                                     * above the edge for margin.  Do not cut below ~12. */
-#define KEY_GAP_MS            6    /* inter-key gap (release->next press).  Matters far less
-                                     * than the hold; 3 ms let a rare drop back in, 6-8 ms
-                                     * is drop-safe. */
+                                     * below ~16 ms the host drops keys at a low RANDOM rate
+                                     * (13 dropped a run that 12 survived), so this is not a
+                                     * hard threshold.  14 with an 8 ms gap is the fastest
+                                     * that stays near-reliable; 16/8 is the guaranteed-clean
+                                     * fallback if any drop is ever seen. */
+#define KEY_GAP_MS            8    /* inter-key gap (release->next press).  Kept at the
+                                     * proven-clean 8 ms (the fast tests that dropped all
+                                     * used 6); matters less than the hold but adds margin. */
 #define MOD_SETTLE_MS        16    /* settle after a Shift/AltGr change before the key */
 #define WARMUP_SLOW_KEYS      8    /* first N keys: slowest.  With a reliable 16 ms base
                                      * hold the opening no longer needs a long ramp, so
