@@ -1,12 +1,10 @@
 # Rubberless-Ducky
 
-Open firmware for a DIY USB HID keystroke injector, running on the Atmel AT32UC3B1 (AVR32 UC3B1256). Hak5 gatekeeps the firmware for the new Rubber Ducky, so we remade it. Rubber not included.
+Open AT32UC3B1 firmware for a DIY USB HID keystroke injector, DuckyScript-compatible. Hak5 gatekeeps the firmware for the new Rubber Ducky, so we remade it. Rubber not included. Most opcodes work; some do not yet.
 
-Not every DuckyScript command is supported yet. Parity is the goal.
+On boot the firmware reads `INJECT.BIN` from the SD card into RAM and runs 16-bit big-endian words: control opcodes (DELAY, GOTO, IF, ATTACKMODE, WAIT_FOR_BUTTON_PRESS, ...) and raw HID keystrokes `(keycode << 8) | modifier`. The device is a HID keyboard only; the SD card stays hidden from the host unless you opt in.
 
-On boot the firmware reads `INJECT.BIN` from the SD card (SPI) into RAM and runs it as 16-bit big-endian words: a control opcode (DELAY, GOTO, IF, ATTACKMODE, WAIT_FOR_BUTTON_PRESS, ...) or a raw HID keystroke `(keycode << 8) | modifier`. The device enumerates as a HID keyboard only. The SD card stays hidden from the host unless you opt in.
-
-Payload-language, keymap, and firmware reference lives in `info/`. Bench-test payloads live in `hwtest/`.
+Docs in `info/`, test payloads in `hwtest/`.
 
 ## Folder Structure
 
@@ -44,7 +42,7 @@ IN (device to host), Report ID `0x02`: byte 1 is `0x01` alive or `0xFF` error, b
 
 ## Build
 
-Needs the AVR32 GNU toolchain (`avr32-gcc`, `avr32-objcopy`, `avr32-size`). A Windows build is vendored at `tools/AVR Toolchain/`; add its `bin/` to `PATH`. Also needs Make (`choco install make`, or Git for Windows / MSYS2 / WSL).
+Needs the AVR32 GNU toolchain (`avr32-gcc`, `avr32-objcopy`, `avr32-size`). A Windows build is vendored at `tools/AVR Toolchain/`; add its `bin/` to `PATH`. Also needs Make (`choco install make`, Git for Windows, MSYS2, or WSL).
 
 ```cmd
 make all
@@ -70,12 +68,12 @@ dfu-programmer at32uc3b1 launch
 
 ## Memory Map
 
-| Region         | Range                    | Size    | Purpose                |
-|----------------|--------------------------|---------|------------------------|
-| Flash (DFU BL) | `0x80000000`..`0x80001FFF` | 8 KB   | Factory DFU bootloader |
-| Flash (App)    | `0x80002000`..`0x8003FFFF` | 248 KB | This firmware          |
-| SRAM           | `0x00000000`..`0x00007FFF` | 32 KB  | Stack, data, BSS       |
-| USBB FIFO      | `0xFFFE0000`..`0xFFFEFFFF` | 64 KB  | USB peripheral FIFOs   |
+| Region         | Range                        | Size    | Purpose                |
+|----------------|------------------------------|---------|------------------------|
+| Flash (DFU BL) | `0x80000000`..`0x80001FFF`   | 8 KB    | Factory DFU bootloader |
+| Flash (App)    | `0x80002000`..`0x8003FFFF`   | 248 KB  | This firmware          |
+| SRAM           | `0x00000000`..`0x00007FFF`   | 32 KB   | Stack, data, BSS       |
+| USBB FIFO      | `0xFFFE0000`..`0xFFFEFFFF`   | 64 KB   | USB peripheral FIFOs   |
 
 `src/at32uc3b1.ld` places the app at `0x80002000` so the DFU bootloader is preserved.
 
@@ -97,4 +95,8 @@ Use [hidapitester](https://github.com/todbot/hidapitester/releases) to poke the 
 
 ## Legal
 
-Clean-room reimplementation. This repository distributes no Hak5 code. If Hak5 requests deletion of this repository, we will comply.
+Rubberless-Ducky is a clean-room reimplementation. It targets the same hardware and payload format as Hak5's USB Rubber Ducky, but is written from scratch without reference to Hak5's source, distributes no Hak5 code, ships no Hak5 firmware images, and reuses no Hak5 branding, logos, or artwork. The names "Hak5", "USB Rubber Ducky", and "DuckyScript" are trademarks of their respective owners; they are used here only to describe compatibility and interoperability, and the project name is deliberately distinct.
+
+The firmware is provided for interoperability, education, and security research on hardware and networks the user owns or has written permission to test. It is not endorsed by, affiliated with, or supported by Hak5 LLC.
+
+If Hak5 requests deletion of this repository, we will comply. Please open an issue on this repository, or contact the maintainers directly, and we will remove the repository or any specific content promptly on written notice. If a narrower change (renaming, removing a file, adjusting wording) would resolve the concern, we welcome that conversation first.
