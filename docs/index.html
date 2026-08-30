@@ -97,7 +97,7 @@
 
 <h2>Download</h2>
 <div class="downloads">
-  <a class="dl" href="../firmware.hex" download><b>firmware.hex</b><span>Prebuilt image (this is what you flash)</span></a>
+  <a class="dl" href="./firmware.hex" download><b>firmware.hex</b><span>Prebuilt image (this is what you flash)</span></a>
   <a class="dl" href="https://sourceforge.net/projects/dfu-programmer/files/latest/download" target="_blank" rel="noopener"><b>dfu-programmer</b><span>CLI flasher (Windows, macOS, Linux)</span></a>
   <a class="dl" href="https://zadig.akeo.ie/" target="_blank" rel="noopener"><b>Zadig</b><span>Windows-only: install the WinUSB driver on the DFU device</span></a>
 </div>
@@ -336,7 +336,7 @@ $('btnConnect').onclick = async () => {
 
 $('btnLoadDefault').onclick = async () => {
   try {
-    const r = await fetch('../firmware.hex');
+    const r = await fetch('./firmware.hex');
     if (!r.ok) throw new Error("HTTP " + r.status);
     const text = await r.text();
     const parsed = parseHex(text);
