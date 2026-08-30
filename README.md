@@ -6,6 +6,28 @@ On boot the firmware reads `INJECT.BIN` from the SD card into RAM and runs 16-bi
 
 Docs in `info/`, test payloads in `hwtest/`.
 
+## Do not flash a working device
+
+This firmware is **Alpha**. It exists to bring back devices that are already bricked, or that you specifically want to run open firmware on. It is not a drop-in replacement for the stock Hak5 firmware yet: some DuckyScript opcodes are not implemented, the SD-card path has known rough edges, and the stock firmware cannot be restored from this repository. If your device works today, leave it alone until parity is closer.
+
+## Flash it
+
+The easy path is the web flasher at **[qwavey.github.io/Rubberless-Ducky](https://qwavey.github.io/Rubberless-Ducky/)**. It ships `firmware.hex`, links to `dfu-programmer` and Zadig, and walks you through the whole thing.
+
+Manual, in short:
+
+1. **Enter DFU mode.** Unplug the device. Hold the small board button (BOOT / HWB / similar) and plug it back in. Release the button.
+2. **Install the WinUSB driver with Zadig (first time only on Windows).** [Zadig](https://zadig.akeo.ie/), `Options` > `List All Devices`, pick `AT32UC3B DFU`, select `WinUSB`, click `Install Driver`.
+3. **Flash.** From an Administrator Command Prompt in the folder that has `firmware.hex` and `dfu-programmer.exe`:
+   ```cmd
+   dfu-programmer at32uc3b1 erase --force
+   dfu-programmer at32uc3b1 flash firmware.hex
+   dfu-programmer at32uc3b1 launch
+   ```
+   The device reboots as a HID keyboard; the status LED goes solid when it is ready.
+
+`flash_firmware.bat` at the repo root does all three commands in one click.
+
 ## Folder Structure
 
 ```
@@ -15,7 +37,9 @@ Docs in `info/`, test payloads in `hwtest/`.
 ├── hwtest/             Bench-test payloads (jitter, storage, opcode coverage, ...)
 ├── languages/          Keymap JSON files
 ├── tools/              AVR toolchain, dfu-programmer, inject_inspect.py, wrap_inject.py
+├── docs/               WebUSB flasher (GitHub Pages)
 ├── build/              Output of `make` (firmware.elf/hex/map)
+├── firmware.hex        Prebuilt image (what the flasher writes)
 ├── CONFIG.TXT
 ├── flash_firmware.bat  One-click: erase, flash, launch
 ├── Makefile
@@ -24,7 +48,7 @@ Docs in `info/`, test payloads in `hwtest/`.
 
 ## USB Identity
 
-VID `0x03EB` (Atmel), PID `0x2402`, HID keyboard, 64-byte reports (`0x01` OUT, `0x02` IN), 1 ms polling. Get your own VID/PID for production.
+VID `0x03EB` (Atmel), PID `0x2402`, HID keyboard, 64-byte reports (`0x01` OUT, `0x02` IN), 1 ms polling. In DFU mode the PID is `0x2FF6`. Get your own VID/PID for production.
 
 ## HID Report Protocol
 
@@ -48,23 +72,7 @@ Needs the AVR32 GNU toolchain (`avr32-gcc`, `avr32-objcopy`, `avr32-size`). A Wi
 make all
 ```
 
-Output: `build/firmware.elf`, `build/firmware.hex`, `build/firmware.map`.
-
-## Flash (Windows)
-
-First time only: put the device in DFU mode (hold BOOT/HWB, replug), then use [Zadig](https://zadig.akeo.ie/) to bind the `AT32UC3B DFU` device to the WinUSB driver.
-
-One-click:
-```
-flash_firmware.bat   (run as Administrator)
-```
-
-Manual:
-```cmd
-dfu-programmer at32uc3b1 erase --force
-dfu-programmer at32uc3b1 flash build\firmware.hex
-dfu-programmer at32uc3b1 launch
-```
+Output: `build/firmware.elf`, `build/firmware.hex`, `build/firmware.map`. Copy `build/firmware.hex` over `firmware.hex` at the repo root to bundle it with the flasher page.
 
 ## Memory Map
 
@@ -83,15 +91,16 @@ Compile a payload into `INJECT.BIN` with `tools/wrap_inject.py`, drop it on the 
 
 ## Verify (host)
 
-Use [hidapitester](https://github.com/todbot/hidapitester/releases) to poke the device: `--list` to find VID `03EB` PID `2402`, `--read-input 64 --length 64` for the heartbeat, `--send-output 0x01,0x01 --length 64` for LED ON.
+Use [hidapitester](https://github.com/todbot/hidapitester/releases): `--list` to find VID `03EB` PID `2402`, `--read-input 64 --length 64` for the heartbeat, `--send-output 0x01,0x01 --length 64` for LED ON.
 
 ## Troubleshooting
 
-- **No device present**: enter DFU mode, run Zadig
+- **No device present**: enter DFU mode (hold button while plugging in), run Zadig on Windows
 - **`dfu-programmer` not found**: use `tools/dfu-programmer.exe` or add it to `PATH`
 - **`avr32-gcc` not found**: add `tools/AVR Toolchain/bin/` to `PATH`
 - **LED does not light after flash**: check `LED_PIN` in `src/main.c`
 - **HID device does not appear**: unplug, replug, check VID/PID in Device Manager
+- **Web flasher does not see the device**: the Atmel DFU bootloader does not advertise WebUSB descriptors, so Chrome only offers it if no other driver has claimed it. On Windows this means WinUSB via Zadig. If it still does not appear, use the manual `dfu-programmer` commands.
 
 ## Legal
 
