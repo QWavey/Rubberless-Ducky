@@ -2,6 +2,8 @@
 
 Keystroke-injection firmware for the Atmel AT32UC3B1 (AVR32 UC3B1256) microcontroller. On boot it mounts the SD card over SPI, reads `INJECT.BIN` into RAM, and interprets it as a stream of 16-bit big-endian words. Each word is either a control opcode (DELAY, GOTO, IF, ATTACKMODE, WAIT_FOR_BUTTON_PRESS, and others) or a raw HID keystroke encoded as `(keycode << 8) | modifier`. The device enumerates as a HID keyboard only; the SD card is never exposed to the host.
 
+Hak5 gatekeeps the firmware for the Rubber Ducky. So we remade it. Rubber not included.
+
 Reference material for the payload language, keymap format, and firmware behavior lives in `info/`. Bench-test payloads and storage/end-to-end tests live in `hwtest/`.
 
 ## Folder Structure
