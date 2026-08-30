@@ -3,142 +3,431 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rubberless-Ducky - Flasher</title>
+<title>Rubberless-Ducky Flasher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f7f7f5; --fg: #17171a; --muted: #6b6b73; --line: #d9d9d6;
-    --accent: #b45309; --warn-bg: #fef3c7; --warn-fg: #78350f;
-    --err-bg: #fee2e2; --err-fg: #7f1d1d;
-    --ok-bg: #dcfce7; --ok-fg: #14532d;
-    --code-bg: #eeeeeb;
+    /* light */
+    --bg:        #ededea;
+    --panel:     #f5f4f1;
+    --fg:        #16161a;
+    --fg-2:      #3a3a41;
+    --muted:     #6b6b73;
+    --line:      #cfcec9;
+    --line-2:    #dedcd7;
+    --accent:    #b23f0d;
+    --accent-fg: #ffffff;
+    --warn-fg:   #6a2c05;
+    --warn-bg:   #f3e0c9;
+    --warn-line: #d99555;
+    --ok-fg:     #14532d;
+    --ok-bg:     #d4ecc9;
+    --err-fg:    #7f1d1d;
+    --err-bg:    #f3ccc9;
+    --code-bg:   #e3e1dc;
+    --code-fg:   #16161a;
+    --focus:     #b23f0d;
+    --shadow:    0 1px 0 rgba(0,0,0,0.02);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      color-scheme: dark;
+    }
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #17171a; --fg: #eeeeeb; --muted: #9c9ca4; --line: #2e2e33;
-      --accent: #fbbf24; --warn-bg: #3f2d10; --warn-fg: #fde68a;
-      --err-bg: #3f1414; --err-fg: #fecaca;
-      --ok-bg: #113321; --ok-fg: #bbf7d0;
-      --code-bg: #222227;
+      --bg:        #0d0d10;
+      --panel:     #16161a;
+      --fg:        #eeeeeb;
+      --fg-2:      #c9c9c3;
+      --muted:     #8a8a92;
+      --line:      #2a2a30;
+      --line-2:    #1e1e23;
+      --accent:    #f97316;
+      --accent-fg: #16110c;
+      --warn-fg:   #fbd693;
+      --warn-bg:   #33220b;
+      --warn-line: #b8752a;
+      --ok-fg:     #bbf7d0;
+      --ok-bg:     #0f2a1a;
+      --err-fg:    #fecaca;
+      --err-bg:    #2d1010;
+      --code-bg:   #1c1c22;
+      --code-fg:   #eeeeeb;
+      --focus:     #f97316;
+      --shadow:    none;
     }
   }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:        #0d0d10;
+    --panel:     #16161a;
+    --fg:        #eeeeeb;
+    --fg-2:      #c9c9c3;
+    --muted:     #8a8a92;
+    --line:      #2a2a30;
+    --line-2:    #1e1e23;
+    --accent:    #f97316;
+    --accent-fg: #16110c;
+    --warn-fg:   #fbd693;
+    --warn-bg:   #33220b;
+    --warn-line: #b8752a;
+    --ok-fg:     #bbf7d0;
+    --ok-bg:     #0f2a1a;
+    --err-fg:    #fecaca;
+    --err-bg:    #2d1010;
+    --code-bg:   #1c1c22;
+    --code-fg:   #eeeeeb;
+    --focus:     #f97316;
+    --shadow:    none;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   html, body { background: var(--bg); color: var(--fg); }
   body {
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    margin: 0; padding: 32px 20px 96px;
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 48px 20px 96px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  main { max-width: 780px; margin: 0 auto; }
-  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  h2 { font-size: 20px; margin: 40px 0 8px; letter-spacing: -0.01em; }
-  h3 { font-size: 16px; margin: 24px 0 6px; }
-  p { margin: 10px 0; }
-  .lede { color: var(--muted); margin-bottom: 24px; }
-  a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-  code, pre { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 13px; }
-  code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
-  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; }
+  main { max-width: 760px; margin: 0 auto; }
+
+  /* Type */
+  .kicker {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; letter-spacing: 0.04em;
+    color: var(--muted);
+    display: inline-flex; align-items: center; gap: 8px;
+    margin: 0 0 12px;
+  }
+  .kicker::before {
+    content: ""; width: 20px; height: 1px; background: currentColor; display: inline-block;
+  }
+  h1 {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 34px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 12px;
+  }
+  h2 {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 18px;
+    letter-spacing: 0.01em;
+    margin: 56px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line-2);
+  }
+  h2 .n {
+    color: var(--muted); font-weight: 400;
+    margin-right: 12px; font-size: 15px;
+  }
+  h3 {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 500; font-size: 14px;
+    margin: 24px 0 6px;
+    color: var(--fg-2);
+  }
+  p { margin: 10px 0 14px; color: var(--fg-2); }
+  p.lede {
+    color: var(--fg);
+    font-size: 18px;
+    line-height: 1.55;
+    max-width: 62ch;
+    margin: 0 0 8px;
+  }
+  a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, button:focus-visible, .dl:focus-visible, label:focus-within {
+    outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px;
+  }
+
+  code, pre, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13.5px;
+  }
+  code {
+    background: var(--code-bg); color: var(--code-fg);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-fg);
+    padding: 14px 16px;
+    border-radius: 4px;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
   pre code { background: none; padding: 0; }
-  .warn, .err, .ok, .info {
-    padding: 12px 14px; border-radius: 6px; margin: 16px 0;
+
+  /* Note blocks */
+  .note {
+    padding: 16px 18px;
     border-left: 3px solid;
+    border-radius: 0 4px 4px 0;
+    margin: 20px 0;
+    font-size: 15px; line-height: 1.55;
   }
-  .warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-fg); }
-  .err  { background: var(--err-bg);  color: var(--err-fg);  border-color: var(--err-fg); }
-  .ok   { background: var(--ok-bg);   color: var(--ok-fg);   border-color: var(--ok-fg); }
-  .info { background: var(--code-bg); color: var(--fg); border-color: var(--muted); }
-  .warn strong, .err strong, .ok strong { display: block; margin-bottom: 4px; }
-  ol.steps { counter-reset: s; list-style: none; padding: 0; }
-  ol.steps > li {
-    counter-increment: s; padding: 12px 0 12px 42px; position: relative;
-    border-top: 1px solid var(--line);
+  .note strong { display: block; margin-bottom: 6px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-size: 13px; letter-spacing: 0.02em; text-transform: uppercase; }
+  .note.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+  .note.info { background: var(--code-bg); color: var(--fg-2); border-color: var(--muted); }
+  .note.err  { background: var(--err-bg);  color: var(--err-fg);  border-color: var(--err-fg); }
+  .note.ok   { background: var(--ok-bg);   color: var(--ok-fg);   border-color: var(--ok-fg); }
+
+  /* Downloads — kept from previous version, refined typography only */
+  .downloads {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    margin: 14px 0 24px;
   }
-  ol.steps > li:first-child { border-top: 0; }
-  ol.steps > li::before {
-    content: counter(s); position: absolute; left: 0; top: 12px;
-    width: 28px; height: 28px; border-radius: 50%; background: var(--fg); color: var(--bg);
-    display: grid; place-items: center; font-weight: 600; font-size: 13px;
-  }
-  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0 20px; }
   .dl {
-    display: block; padding: 14px; background: var(--code-bg); border-radius: 6px;
-    color: var(--fg); text-decoration: none; border: 1px solid var(--line);
+    display: block;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--fg);
+    text-decoration: none;
+    transition: border-color 0.12s, background 0.12s;
   }
-  .dl:hover { border-color: var(--fg); }
-  .dl b { display: block; font-size: 15px; }
-  .dl span { color: var(--muted); font-size: 13px; }
-  button {
-    font: 500 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--fg); color: var(--bg);
-    border: 0; padding: 10px 16px; border-radius: 6px; cursor: pointer;
+  .dl:hover { border-color: var(--fg); text-decoration: none; }
+  .dl b {
+    display: block;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.01em;
   }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
-  .flasher { border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin: 16px 0; }
-  .flasher .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  .dl span {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 4px;
+    line-height: 1.4;
+  }
+
+  /* Steps — one hairline divider between items, mono counter, no rounded chip */
+  ol.steps {
+    counter-reset: s;
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 24px;
+    border-top: 1px solid var(--line-2);
+  }
+  ol.steps > li {
+    counter-increment: s;
+    padding: 18px 0 18px 56px;
+    position: relative;
+    border-bottom: 1px solid var(--line-2);
+  }
+  ol.steps > li::before {
+    content: counter(s, decimal-leading-zero);
+    position: absolute;
+    left: 0; top: 20px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  ol.steps > li b {
+    display: block;
+    color: var(--fg);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  ol.steps > li p, ol.steps > li pre { margin: 8px 0; }
+
+  /* Flasher panel */
+  .flasher {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 22px;
+    margin: 16px 0 24px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  button, .btn {
+    font: 500 14px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: 0.02em;
+    background: var(--fg);
+    color: var(--bg);
+    border: 1px solid var(--fg);
+    padding: 10px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: opacity 0.12s;
+  }
+  button.primary, .btn.primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+  }
+  button.ghost, .btn.ghost {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--line);
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button:not(:disabled):hover { opacity: 0.9; }
+  .fileinput {
+    display: inline-flex; align-items: center;
+    font: 500 14px/1 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: 0.02em;
+    color: var(--fg);
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 10px 14px; border-radius: 4px; cursor: pointer;
+  }
+  .fileinput input { display: none; }
+
+  .progress {
+    width: 100%; height: 6px;
+    background: var(--code-bg);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 12px 0 8px;
+  }
+  .progress > div {
+    height: 100%; width: 0;
+    background: var(--accent);
+    transition: width 0.15s linear;
+  }
   #log {
-    background: var(--code-bg); padding: 10px 12px; border-radius: 6px;
-    height: 180px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px;
-    white-space: pre-wrap; word-break: break-all;
+    background: var(--bg);
+    border: 1px solid var(--line-2);
+    padding: 12px 14px;
+    border-radius: 4px;
+    height: 180px;
+    overflow: auto;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: var(--fg-2);
   }
-  .progress { width: 100%; height: 8px; background: var(--code-bg); border-radius: 4px; overflow: hidden; margin: 6px 0; }
-  .progress > div { height: 100%; background: var(--accent); width: 0; transition: width 0.15s; }
-  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  #log .ts { color: var(--muted); }
+  #log .err { color: var(--err-fg); }
+  #log .ok  { color: var(--ok-fg); }
+
+  /* Header meta strip */
+  header.top {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 20px; margin-bottom: 28px;
+    border-bottom: 1px solid var(--line-2);
+  }
+  header.top .brand {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 13px; letter-spacing: 0.02em;
+    color: var(--fg);
+  }
+  header.top .meta {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px; color: var(--muted);
+  }
+  header.top .meta a { color: var(--muted); }
+  header.top .meta a:hover { color: var(--fg); }
+
+  footer.bottom {
+    margin-top: 72px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line-2);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+
+  ul.plain { margin: 8px 0 14px; padding-left: 20px; color: var(--fg-2); }
+  ul.plain li { margin: 4px 0; }
+
+  @media (max-width: 520px) {
+    body { padding: 24px 16px 72px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 16px; margin-top: 44px; }
+    .row { gap: 6px; }
+  }
 </style>
 </head>
 <body>
 <main>
 
-<h1>Rubberless-Ducky Flasher</h1>
-<p class="lede">Open AT32UC3B1 firmware for reviving bricked Hak5 USB Rubber Ducky hardware. This page hands you the firmware and walks you through flashing it.</p>
+<header class="top">
+  <div class="brand">Rubberless-Ducky / Flasher</div>
+  <div class="meta">
+    v0-alpha
+    &nbsp;·&nbsp;
+    <a href="https://github.com/QWavey/Rubberless-Ducky" target="_blank" rel="noopener">source</a>
+  </div>
+</header>
 
-<div class="warn">
-  <strong>Alpha. Read this before you flash.</strong>
-  Do not flash this firmware onto a device that already works. It is unfinished, not every DuckyScript opcode is implemented, and the SD-card path has known rough edges. It exists to bring back devices that are already bricked or that you specifically want to run open firmware on. If you flash a healthy device, you are trading working stock firmware for known-incomplete work. The stock firmware cannot be restored from here.
+<p class="kicker">AT32UC3B1 · DFU · WebUSB</p>
+<h1>Bring the Rubber Ducky back to life.</h1>
+<p class="lede">Open, clean-room firmware for the Atmel AT32UC3B1 in bricked Hak5 USB Rubber Ducky hardware. Download the image, put the device into DFU mode, flash. Reference below.</p>
+
+<div class="note warn">
+  <strong>Alpha. Read this first.</strong>
+  Do not flash this firmware onto a device that already works. Not every DuckyScript opcode is implemented, and the SD-card path has known rough edges. It exists to bring back devices that are already bricked, or that you want to run open firmware on. If you flash a healthy device you are trading working stock firmware for known-incomplete work, and the stock firmware cannot be restored from here.
 </div>
 
-<h2>Download</h2>
+<h2><span class="n">01</span>Download</h2>
 <div class="downloads">
-  <a class="dl" href="./firmware.hex" download><b>firmware.hex</b><span>Prebuilt image (this is what you flash)</span></a>
-  <a class="dl" href="https://sourceforge.net/projects/dfu-programmer/files/latest/download" target="_blank" rel="noopener"><b>dfu-programmer</b><span>CLI flasher (Windows, macOS, Linux)</span></a>
-  <a class="dl" href="https://zadig.akeo.ie/" target="_blank" rel="noopener"><b>Zadig</b><span>Windows-only: install the WinUSB driver on the DFU device</span></a>
+  <a class="dl" href="./firmware.hex" download><b>firmware.hex</b><span>Prebuilt image. This is what you flash.</span></a>
+  <a class="dl" href="https://raw.githubusercontent.com/QWavey/Rubberless-Ducky/version-8/tools/dfu-programmer.exe" download><b>dfu-programmer.exe</b><span>Direct download. Windows CLI flasher.</span></a>
+  <a class="dl" href="https://zadig.akeo.ie/downloads/zadig-2.9.exe" download><b>Zadig 2.9</b><span>Direct download. Windows-only: install the WinUSB driver on the DFU device.</span></a>
+  <a class="dl" href="https://github.com/QWavey/Rubberless-Ducky/tree/version-8/tools" target="_blank" rel="noopener"><b>Atmel tools</b><span>Vendored AVR toolchain, libusb, dfu-programmer sources, all in one folder.</span></a>
 </div>
 
-<h2>Flash it (easy path, Windows)</h2>
+<h2><span class="n">02</span>Flash it (Windows, easy path)</h2>
 <ol class="steps">
   <li>
-    <b>Put the device into DFU (bootloader) mode.</b><br>
-    Unplug the device. Hold the small button on the board (labeled BOOT, HWB, or similar), and while holding it, plug the device back into USB. Release the button after one second. The device is now silent to the operating system, waiting for a firmware upload. It will not show up as a keyboard.
+    <b>Enter DFU (bootloader) mode.</b>
+    <p>Unplug the device. Hold the small button on the board (labeled BOOT, HWB, or similar) and, while holding it, plug the device back in. Release the button after about a second. The device now waits silently for a firmware upload. It will not appear as a keyboard.</p>
   </li>
   <li>
-    <b>Install the WinUSB driver with Zadig (first time only).</b><br>
-    Open Zadig. From the menu, choose <code>Options &rarr; List All Devices</code>. In the dropdown, pick the entry that looks like <code>AT32UC3B DFU</code>. On the right, select <code>WinUSB</code>. Click <b>Install Driver</b>. Wait for it to finish. You only ever do this once per PC.
+    <b>Install the WinUSB driver with Zadig (first time only per PC).</b>
+    <p>Open Zadig. From the menu, <code>Options &rarr; List All Devices</code>. In the dropdown pick <code>AT32UC3B DFU</code>. On the right pick <code>WinUSB</code>. Click <b>Install Driver</b>. Wait for it to finish. This is a one-time step.</p>
   </li>
   <li>
-    <b>Download the firmware and dfu-programmer.</b><br>
-    Use the buttons above. Put <code>firmware.hex</code> and <code>dfu-programmer.exe</code> in the same folder.
+    <b>Put <code>firmware.hex</code> and <code>dfu-programmer.exe</code> in the same folder.</b>
+    <p>Both are one-click downloads above.</p>
   </li>
   <li>
-    <b>Open a Command Prompt as Administrator in that folder</b> and run these three commands in order:
-    <pre><code>dfu-programmer at32uc3b1 erase --force
+    <b>Open a Command Prompt as Administrator in that folder and run:</b>
+<pre><code>dfu-programmer at32uc3b1 erase --force
 dfu-programmer at32uc3b1 flash firmware.hex
 dfu-programmer at32uc3b1 launch</code></pre>
-    The device disconnects from DFU mode, re-enumerates as a HID keyboard, and the status LED goes solid when it is ready.
+    <p>The device disconnects from DFU mode, re-enumerates as a HID keyboard, and the status LED goes solid when it is ready.</p>
   </li>
 </ol>
 
-<h2>Flash it (experimental, no installers)</h2>
-<p>WebUSB flashing runs entirely in this page, in Chrome or Edge. It still needs Zadig on Windows (step 2 above), because Chrome cannot talk to a device that Windows has attached a different driver to. On Linux, a <code>udev</code> rule for VID <code>03EB</code> is enough.</p>
+<h2><span class="n">03</span>Flash it (in-browser, experimental)</h2>
+<p>Everything below runs entirely on this page over WebUSB. It still needs Zadig on Windows (step 2 above), because Chrome cannot talk to a device that Windows has attached a different driver to. On Linux, a <code>udev</code> rule for VID <code>03EB</code> is enough.</p>
 
-<div class="warn">
-  <strong>Known limitations.</strong>
-  The Atmel DFU bootloader on AT32UC3B does not advertise WebUSB descriptors, so Chrome will only offer the device in the picker if no other driver has claimed it. If the device does not appear, use the manual path above.
+<div class="note info">
+  <strong>Known limit</strong>
+  The Atmel DFU bootloader on AT32UC3B does not advertise WebUSB descriptors, so Chrome will only offer the device in its picker if no other driver has claimed it. If the device does not show up, use the manual path above.
 </div>
 
 <div class="flasher">
   <div class="row">
-    <button id="btnConnect">Connect DFU device</button>
-    <button id="btnLoadDefault" class="ghost">Load bundled firmware.hex</button>
-    <label class="ghost" style="padding:9px 12px;border:1px solid var(--line);border-radius:6px;cursor:pointer">
-      Load your .hex <input id="fileHex" type="file" accept=".hex" hidden>
+    <button id="btnConnect" class="primary">Connect device</button>
+    <button id="btnLoadDefault" class="ghost">Use bundled firmware.hex</button>
+    <label class="fileinput">
+      Choose .hex file
+      <input id="fileHex" type="file" accept=".hex">
     </label>
   </div>
   <div class="row">
@@ -147,17 +436,35 @@ dfu-programmer at32uc3b1 launch</code></pre>
     <button id="btnLaunch" disabled>Launch</button>
   </div>
   <div class="progress"><div id="bar"></div></div>
-  <div id="log">Ready.</div>
+  <div id="log"><span class="ts">[ready]</span> waiting.</div>
 </div>
 
-<h2>Build it yourself</h2>
-<p>Clone the repo. Add <code>tools/AVR Toolchain/bin/</code> to <code>PATH</code>. Run <code>make all</code>. The output lands at <code>build/firmware.hex</code>.</p>
+<h2><span class="n">04</span>Build it yourself</h2>
+<p>Clone the repo. Add <code>tools/AVR Toolchain/bin/</code> to <code>PATH</code>. Run:</p>
+<pre><code>make all</code></pre>
+<p>Output lands at <code>build/firmware.hex</code>. Copy it over <code>firmware.hex</code> at the repo root to bundle a fresh build with this flasher page.</p>
 
-<h2>Legal</h2>
-<p>Rubberless-Ducky is a clean-room reimplementation. It targets the same hardware and payload format as Hak5's USB Rubber Ducky but is written from scratch without reference to Hak5's source, distributes no Hak5 code, ships no Hak5 firmware images, and reuses no Hak5 branding or artwork. "Hak5", "USB Rubber Ducky", and "DuckyScript" are trademarks of their respective owners; they are used here only to describe compatibility. The project is not endorsed by or affiliated with Hak5 LLC. If Hak5 requests deletion of this repository, we will comply. See the <a href="https://github.com/QWavey/Rubberless-Ducky/blob/version-8/README.md">README</a> for the full note.</p>
+<h2><span class="n">05</span>Reference</h2>
+<h3>USB identity</h3>
+<ul class="plain">
+  <li>VID <code>0x03EB</code> (Atmel), PID <code>0x2402</code> in application mode</li>
+  <li>PID <code>0x2FF6</code> in DFU mode</li>
+  <li>HID keyboard, 64-byte reports (<code>0x01</code> OUT, <code>0x02</code> IN), 1 ms polling</li>
+</ul>
 
-<footer>
-  Repo: <a href="https://github.com/QWavey/Rubberless-Ducky">QWavey/Rubberless-Ducky</a>. Hosted on GitHub Pages.
+<h3>Memory map</h3>
+<pre><code>0x80000000..0x80001FFF   8 KB   Factory DFU bootloader (preserved)
+0x80002000..0x8003FFFF   248 KB App firmware (this)
+0x00000000..0x00007FFF   32 KB  SRAM (stack, data, BSS)
+0xFFFE0000..0xFFFEFFFF   64 KB  USBB peripheral FIFOs</code></pre>
+
+<h2><span class="n">06</span>Legal</h2>
+<p>Rubberless-Ducky is a clean-room reimplementation. It targets the same hardware and payload format as Hak5&#39;s USB Rubber Ducky, but is written from scratch without reference to Hak5&#39;s source, distributes no Hak5 code, ships no Hak5 firmware images, and reuses no Hak5 branding or artwork. The names &quot;Hak5&quot;, &quot;USB Rubber Ducky&quot;, and &quot;DuckyScript&quot; are trademarks of their respective owners; they are used here only to describe compatibility. The project is not endorsed by, affiliated with, or supported by Hak5 LLC.</p>
+<p>If Hak5 requests deletion of this repository, we will comply. Open an issue on the repository or contact the maintainers, and we will remove the repository or specific content on written notice. If a narrower change (renaming, removing a file, adjusting wording) would resolve the concern, we welcome that conversation first.</p>
+
+<footer class="bottom">
+  <div>QWavey / Rubberless-Ducky</div>
+  <div><a href="https://github.com/QWavey/Rubberless-Ducky">github.com/QWavey/Rubberless-Ducky</a></div>
 </footer>
 
 </main>
@@ -165,13 +472,26 @@ dfu-programmer at32uc3b1 launch</code></pre>
 <script>
 // ---- Minimal Atmel AVR32 DFU flasher over WebUSB ----
 // Protocol reference: dfu-programmer source (src/atmel.c).
-// This handles chip erase, page-based program, and reset for AT32UC3B parts.
-// It is best-effort: WebUSB access to an Atmel DFU device requires that
-// no other driver has claimed the device (WinUSB via Zadig on Windows).
+// Handles chip erase, page-based program, and launch for AT32UC3B parts.
+// Best-effort: WebUSB access to an Atmel DFU device requires that no other
+// driver has claimed the device (WinUSB via Zadig on Windows).
 
 const $ = id => document.getElementById(id);
-const log = s => { const el = $('log'); el.textContent += '\n' + s; el.scrollTop = el.scrollHeight; };
-const bar = pct => { $('bar').style.width = Math.max(0, Math.min(100, pct)) + '%'; };
+const pad2 = n => String(n).padStart(2, '0');
+function tsNow() {
+  const d = new Date();
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+function log(msg, cls) {
+  const el = $('log');
+  const line = document.createElement('div');
+  const t = document.createElement('span'); t.className = 'ts'; t.textContent = `[${tsNow()}] `;
+  const b = document.createElement('span'); if (cls) b.className = cls; b.textContent = msg;
+  line.appendChild(t); line.appendChild(b);
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function bar(pct) { $('bar').style.width = Math.max(0, Math.min(100, pct)) + '%'; }
 
 const VID = 0x03EB;
 const DFU_PIDS = [0x2FF6, 0x2FF7, 0x2FF8, 0x2FF1, 0x2FFA, 0x2FFB]; // AT32UC3 family
@@ -183,14 +503,13 @@ const DFU_ABORT     = 0x06;
 
 let device = null;
 let iface  = 0;
-let hexBytes = null; // Uint8Array (flat contiguous image at base 0x80002000 offset 0)
-let hexBase  = null; // starting absolute address in flash
+let hexBytes = null;
+let hexBase  = null;
 
-// ---- Intel HEX parser (returns {base, bytes}) ----
 function parseHex(text) {
   const lines = text.split(/\r?\n/);
   let ext = 0, seg = 0;
-  const map = new Map(); // absAddr -> byte
+  const map = new Map();
   for (const raw of lines) {
     if (!raw || raw[0] !== ':') continue;
     const len = parseInt(raw.substr(1, 2), 16);
@@ -224,7 +543,6 @@ async function control(setup, data) {
   if (data) return device.controlTransferOut(req, data);
   return device.controlTransferIn(req, setup.wLength);
 }
-
 async function dfuGetStatus() {
   const r = await control({ bRequest: DFU_GETSTATUS, wValue: 0, wLength: 6 });
   const v = new Uint8Array(r.data.buffer);
@@ -232,41 +550,29 @@ async function dfuGetStatus() {
 }
 async function dfuClrStatus() { await control({ bRequest: DFU_CLRSTATUS, wValue: 0 }, new Uint8Array()); }
 async function dfuAbort()     { await control({ bRequest: DFU_ABORT,     wValue: 0 }, new Uint8Array()); }
-
-// Wait until state is dfuIDLE or dfuDNLOAD-IDLE
 async function waitIdle() {
   for (let i = 0; i < 100; i++) {
     const s = await dfuGetStatus();
-    if (s.status !== 0) { throw new Error("DFU error status " + s.status); }
-    if (s.state === 2 || s.state === 5) return s; // dfuIDLE, dfuDNLOAD-IDLE
+    if (s.status !== 0) throw new Error("DFU error status " + s.status);
+    if (s.state === 2 || s.state === 5) return s;
     await new Promise(r => setTimeout(r, Math.max(5, s.pollTimeout)));
   }
   throw new Error("DFU did not reach idle state");
 }
-
-// Atmel AVR32 vendor command: DFU_DNLOAD with a 5-byte header + payload
 async function atmelWrite(bytes) {
   await control({ bRequest: DFU_DNLOAD, wValue: 0 }, bytes);
   await waitIdle();
 }
-
-// Chip erase (AVR32 UC3): [0x04, 0x00, 0xFF]
 async function chipErase() {
-  log("Erasing flash (whole chip)...");
+  log("erase: whole chip...");
   await atmelWrite(new Uint8Array([0x04, 0x00, 0xFF]));
-  log("Erase OK.");
+  log("erase: done.", "ok");
 }
-
-// Select memory region and set base address (AVR32): [0x06, 0x03, region] then [0x06, 0x03, page_hi, page_lo]
-async function selectRegion(region) {
-  await atmelWrite(new Uint8Array([0x06, 0x03, region]));
-}
+async function selectRegion(region) { await atmelWrite(new Uint8Array([0x06, 0x03, region])); }
 async function setBasePage(page16k) {
   const hi = (page16k >> 8) & 0xFF, lo = page16k & 0xFF;
   await atmelWrite(new Uint8Array([0x06, 0x03, hi, lo]));
 }
-
-// Program a contiguous block: header [0x01, 0x00, start_hi, start_lo, end_hi, end_lo] + payload
 async function programBlock(startOffset, payload) {
   const end = startOffset + payload.length - 1;
   const header = new Uint8Array([0x01, 0x00,
@@ -276,14 +582,11 @@ async function programBlock(startOffset, payload) {
   buf.set(header, 0); buf.set(payload, header.length);
   await atmelWrite(buf);
 }
-
 async function flash(bytes, base) {
-  await selectRegion(0x00); // Flash
+  await selectRegion(0x00);
   const PAGE = 512;
   const total = bytes.length;
   let done = 0;
-  // AT32UC3B application starts at 0x80002000; the DFU expects
-  // absolute offsets within the flash memory space.
   const flashBase = base - 0x80000000;
   let curPage16k = -1;
   for (let off = 0; off < total; off += PAGE) {
@@ -295,20 +598,15 @@ async function flash(bytes, base) {
     await programBlock(inPage, chunk);
     done += chunk.length;
     bar(100 * done / total);
-    if ((off / PAGE) % 8 === 0) log(`Programmed ${done}/${total} bytes`);
+    if ((off / PAGE) % 8 === 0) log(`program: ${done}/${total} bytes`);
   }
-  log(`Programmed ${total} bytes.`);
+  log(`program: ${total} bytes done.`, "ok");
 }
-
 async function launch() {
-  // DFU_DNLOAD with zero-length payload triggers manifestation; the device
-  // then resets. Atmel bootloader also accepts an explicit start command.
   await control({ bRequest: DFU_DNLOAD, wValue: 0 }, new Uint8Array());
-  // don't wait for status: device resets and disappears
-  log("Launch command sent. Device should reset now.");
+  log("launch: reset sent. device should disappear from DFU and re-enumerate.", "ok");
 }
 
-// ---- UI wiring ----
 $('btnConnect').onclick = async () => {
   try {
     device = await navigator.usb.requestDevice({
@@ -316,7 +614,6 @@ $('btnConnect').onclick = async () => {
     });
     await device.open();
     if (device.configuration === null) await device.selectConfiguration(1);
-    // find DFU interface (class = 0xFE, subclass = 0x01)
     for (const c of device.configurations) {
       for (const i of c.interfaces) {
         for (const a of i.alternates) {
@@ -325,15 +622,13 @@ $('btnConnect').onclick = async () => {
       }
     }
     await device.claimInterface(iface);
-    log(`Connected: VID 0x${device.vendorId.toString(16)} PID 0x${device.productId.toString(16)}, interface ${iface}`);
-    // clear any stale error state
+    log(`connect: VID 0x${device.vendorId.toString(16)} PID 0x${device.productId.toString(16)} iface ${iface}`, "ok");
     try { const s = await dfuGetStatus(); if (s.status !== 0) await dfuClrStatus(); } catch(e){}
     $('btnErase').disabled = false;
     $('btnLaunch').disabled = false;
     if (hexBytes) $('btnFlash').disabled = false;
-  } catch (e) { log("Connect failed: " + e.message); }
+  } catch (e) { log("connect: " + e.message, "err"); }
 };
-
 $('btnLoadDefault').onclick = async () => {
   try {
     const r = await fetch('./firmware.hex');
@@ -341,28 +636,26 @@ $('btnLoadDefault').onclick = async () => {
     const text = await r.text();
     const parsed = parseHex(text);
     hexBytes = parsed.bytes; hexBase = parsed.base;
-    log(`Loaded bundled firmware.hex: ${hexBytes.length} bytes at 0x${hexBase.toString(16)}`);
+    log(`load: bundled firmware.hex, ${hexBytes.length} bytes at 0x${hexBase.toString(16)}`, "ok");
     if (device) $('btnFlash').disabled = false;
-  } catch (e) { log("Load failed: " + e.message); }
+  } catch (e) { log("load: " + e.message, "err"); }
 };
-
 $('fileHex').onchange = async ev => {
   const f = ev.target.files[0]; if (!f) return;
   const text = await f.text();
   try {
     const parsed = parseHex(text);
     hexBytes = parsed.bytes; hexBase = parsed.base;
-    log(`Loaded ${f.name}: ${hexBytes.length} bytes at 0x${hexBase.toString(16)}`);
+    log(`load: ${f.name}, ${hexBytes.length} bytes at 0x${hexBase.toString(16)}`, "ok");
     if (device) $('btnFlash').disabled = false;
-  } catch (e) { log("Parse failed: " + e.message); }
+  } catch (e) { log("parse: " + e.message, "err"); }
 };
-
-$('btnErase').onclick  = async () => { try { await chipErase(); } catch(e) { log("Erase failed: " + e.message); } };
-$('btnFlash').onclick  = async () => { try { await flash(hexBytes, hexBase); } catch(e) { log("Flash failed: " + e.message); } };
-$('btnLaunch').onclick = async () => { try { await launch(); } catch(e) { log("Launch: " + e.message); } };
+$('btnErase').onclick  = async () => { try { await chipErase(); } catch(e) { log("erase: " + e.message, "err"); } };
+$('btnFlash').onclick  = async () => { try { await flash(hexBytes, hexBase); } catch(e) { log("flash: " + e.message, "err"); } };
+$('btnLaunch').onclick = async () => { try { await launch(); } catch(e) { log("launch: " + e.message, "err"); } };
 
 if (!('usb' in navigator)) {
-  log("This browser has no WebUSB. Use Chrome, Edge, or another Chromium browser, or fall back to the manual path.");
+  log("no WebUSB in this browser. use Chrome/Edge/Chromium, or the manual path above.", "err");
   $('btnConnect').disabled = true;
 }
 </script>
