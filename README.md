@@ -12,7 +12,7 @@ This firmware is **Alpha**. It exists to bring back devices that are already bri
 
 ## Flash it
 
-The easy path is the web flasher at **[https://qwavey.github.io/Rubberless-Ducky/](https://qwavey.github.io/flashers/))**. It ships `firmware.hex`, links to `dfu-programmer` and Zadig, and walks you through the whole thing.
+The easy path is the web flasher at **(https://qwavey.github.io/flashers/)**. It ships `firmware.hex`, links to `dfu-programmer` and Zadig, and walks you through the whole thing.
 
 Manual, in short:
 
